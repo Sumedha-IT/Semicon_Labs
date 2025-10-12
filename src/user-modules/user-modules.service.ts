@@ -1,0 +1,611 @@
+import { Injectable, NotFoundException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, IsNull } from 'typeorm';
+import { UserModule } from './entities/user-module.entity';
+import { User } from '../users/entities/user.entity';
+import { Module } from '../modules/entities/module.entity';
+import { UserDomain } from '../user-domains/entities/user-domain.entity';
+import { EnrollModuleDto, UpdateUserModuleDto, UserModuleQueryDto } from './dto/user-module.dto';
+
+@Injectable()
+export class UserModulesService {
+  constructor(
+    @InjectRepository(UserModule)
+    private userModuleRepository: Repository<UserModule>,
+    @InjectRepository(User)
+    private userRepository: Repository<User>,
+    @InjectRepository(Module)
+    private moduleRepository: Repository<Module>,
+    @InjectRepository(UserDomain)
+    private userDomainRepository: Repository<UserDomain>,
+  ) {}
+
+  // ============================================================================
+  // PUBLIC METHODS
+  // ============================================================================
+
+  // ----------------------------------------------------------------------------
+  // 1. ENROLLMENT OPERATIONS
+  // ----------------------------------------------------------------------------
+
+  /**
+   * Enroll a user in a module
+   * Validates user access through domain assignments
+   */
+  async enroll(userId: number, enrollDto: EnrollModuleDto) {
+    const { module_id } = enrollDto;
+
+    // Validate module_id
+    if (!module_id || module_id === null || module_id === undefined) {
+      throw new ConflictException('module_id is required and must be a valid number');
+    }
+
+    // Validate user exists and is active
+    await this.validateUserExistsAndActive(userId);
+
+    // Validate module exists
+    const module = await this.validateModuleExists(module_id);
+
+    // Verify user has access through domain assignment
+    await this.validateUserHasModuleAccess(userId, module_id);
+
+    // Check if already enrolled
+    const existingEnrollment = await this.userModuleRepository.findOne({
+      where: { user_id: userId, module_id }
+    });
+
+    if (existingEnrollment) {
+      return {
+        message: 'User is already enrolled in this module',
+        enrollment: this.mapEnrollmentToResponse(existingEnrollment)
+      };
+    }
+
+    // Create enrollment
+    const enrollment = this.userModuleRepository.create({
+      user_id: userId,
+      module_id,
+      status: 'not_started',
+      questions_answered: 0,
+      score: 0,
+      threshold_score: 70
+    });
+
+    const saved = await this.userModuleRepository.save(enrollment);
+
+    return {
+      message: 'Successfully enrolled in module',
+      enrollment: this.mapEnrollmentToResponse(saved)
+    };
+  }
+
+  /**
+   * Unenroll user from module by enrollment ID
+   */
+  async unenroll(enrollmentId: number) {
+    const enrollment = await this.userModuleRepository.findOne({
+      where: { id: enrollmentId }
+    });
+
+    if (!enrollment) {
+      throw new NotFoundException(`Enrollment with ID ${enrollmentId} not found`);
+    }
+
+    // Validate user exists and is active
+    await this.validateUserExistsAndActive(enrollment.user_id);
+
+    await this.userModuleRepository.remove(enrollment);
+
+    return {
+      success: true,
+      message: `User ${enrollment.user_id} unenrolled from module ${enrollment.module_id}`
+    };
+  }
+
+  /**
+   * Unenroll user from module by user ID and module ID
+   */
+  async unenrollByUserAndModule(userId: number, moduleId: number) {
+    // Validate user exists and is active
+    await this.validateUserExistsAndActive(userId);
+
+    const enrollment = await this.userModuleRepository.findOne({
+      where: { user_id: userId, module_id: moduleId }
+    });
+
+    if (!enrollment) {
+      throw new NotFoundException(`No enrollment found for user ${userId} in module ${moduleId}`);
+    }
+
+    await this.userModuleRepository.remove(enrollment);
+
+    return {
+      success: true,
+      message: `User ${userId} unenrolled from module ${moduleId}`
+    };
+  }
+
+  // ----------------------------------------------------------------------------
+  // 2. QUERY OPERATIONS
+  // ----------------------------------------------------------------------------
+
+  /**
+   * Get all enrolled modules for a user with pagination
+   */
+  async getUserModules(userId: number, queryDto: UserModuleQueryDto) {
+    const { page = 1, limit = 10, status, module_id } = queryDto;
+
+    // Validate user exists and is active
+    await this.validateUserExistsAndActive(userId);
+
+    const queryBuilder = this.userModuleRepository
+      .createQueryBuilder('um')
+      .innerJoin('modules', 'm', 'm.id = um.module_id')
+      .innerJoin('domains', 'd', 'd.id = m.domain_id')
+      .where('um.user_id = :userId', { userId });
+
+    // Apply filters
+    if (status) {
+      queryBuilder.andWhere('um.status = :status', { status });
+    }
+
+    if (module_id) {
+      queryBuilder.andWhere('um.module_id = :module_id', { module_id });
+    }
+
+    // Get count before select
+    const total = await queryBuilder.getCount();
+
+    // Select fields
+    queryBuilder.select([
+      'um.id AS id',
+      'um.module_id AS module_id',
+      'm.title AS module_title',
+      'm.desc AS module_description',
+      'd.name AS domain_name',
+      'um.questions_answered AS questions_answered',
+      'um.score AS score',
+      'um.threshold_score AS threshold_score',
+      'um.status AS status',
+      'um.joined_on AS joined_on',
+      'um.completed_on AS completed_on'
+    ]);
+
+    // Pagination
+    queryBuilder
+      .orderBy('um.joined_on', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    const results = await queryBuilder.getRawMany();
+
+    return {
+      data: results,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  /**
+   * Get user module enrollment details for a specific module
+   */
+  async getUserModule(userId: number, moduleId: number) {
+    // Validate user exists and is active
+    await this.validateUserExistsAndActive(userId);
+
+    const progress = await this.userModuleRepository
+      .createQueryBuilder('um')
+      .innerJoin('modules', 'm', 'm.id = um.module_id')
+      .innerJoin('domains', 'd', 'd.id = m.domain_id')
+      .where('um.user_id = :userId', { userId })
+      .andWhere('um.module_id = :moduleId', { moduleId })
+      .select([
+        'um.id AS id',
+        'um.module_id AS module_id',
+        'm.title AS module_title',
+        'm.desc AS module_description',
+        'd.name AS domain_name',
+        'um.questions_answered AS questions_answered',
+        'um.score AS score',
+        'um.threshold_score AS threshold_score',
+        'um.status AS status',
+        'um.joined_on AS joined_on',
+        'um.completed_on AS completed_on'
+      ])
+      .getRawOne();
+
+    if (!progress) {
+      throw new NotFoundException(`No enrollment found for user ${userId} in module ${moduleId}`);
+    }
+
+    // Add pass/fail indicator
+    progress.passed = progress.score >= progress.threshold_score;
+
+    return progress;
+  }
+
+  /**
+   * Get available modules (from user's domains) that user hasn't enrolled in yet
+   */
+  async getAvailableModules(userId: number, queryDto: UserModuleQueryDto) {
+    const { page = 1, limit = 10 } = queryDto;
+
+    // Validate user exists and is active
+    await this.validateUserExistsAndActive(userId);
+
+    // Get modules from user's domains that aren't enrolled yet
+    const queryBuilder = this.moduleRepository
+      .createQueryBuilder('m')
+      .innerJoin('user_domains', 'ud', 'ud.domain_id = m.domain_id')
+      .innerJoin('domains', 'd', 'd.id = m.domain_id')
+      .leftJoin('user_modules', 'um', 'um.module_id = m.id AND um.user_id = :userId', { userId })
+      .where('ud.user_id = :userId', { userId })
+      .andWhere('um.id IS NULL'); // Not enrolled yet
+
+    // Get count before select
+    const total = await queryBuilder.getCount();
+
+    // Apply select and pagination
+    queryBuilder.select([
+      'm.id AS id',
+      'm.title AS title',
+      'm.desc AS description',
+      'm.duration AS duration',
+      'm.level AS level',
+      'd.name AS domain_name',
+      'd.id AS domain_id'
+    ]);
+
+    // Pagination
+    queryBuilder
+      .orderBy('m.created_on', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    const results = await queryBuilder.getRawMany();
+
+    return {
+      data: results,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  /**
+   * Find enrollment by ID (admin operation)
+   */
+  async findOneById(enrollmentId: number) {
+    const enrollment = await this.userModuleRepository
+      .createQueryBuilder('um')
+      .innerJoin('modules', 'm', 'm.id = um.module_id')
+      .innerJoin('domains', 'd', 'd.id = m.domain_id')
+      .innerJoin('users', 'u', 'u.user_id = um.user_id')
+      .where('um.id = :enrollmentId', { enrollmentId })
+      .andWhere('u.deleted_on IS NULL')
+      .select([
+        'um.id AS id',
+        'um.user_id AS user_id',
+        'u.name AS user_name',
+        'u.email AS user_email',
+        'um.module_id AS module_id',
+        'm.title AS module_title',
+        'm.desc AS module_description',
+        'd.name AS domain_name',
+        'um.questions_answered AS questions_answered',
+        'um.score AS score',
+        'um.threshold_score AS threshold_score',
+        'um.status AS status',
+        'um.joined_on AS joined_on',
+        'um.completed_on AS completed_on'
+      ])
+      .getRawOne();
+
+    if (!enrollment) {
+      throw new NotFoundException(`Enrollment with ID ${enrollmentId} not found or user has been deleted`);
+    }
+
+    // Add pass/fail indicator
+    enrollment.passed = enrollment.score >= enrollment.threshold_score;
+
+    return enrollment;
+  }
+
+  /**
+   * Find all enrollments with filters (admin operation)
+   */
+  async findAllEnrollments(queryDto: UserModuleQueryDto) {
+    const { page = 1, limit = 10, status, module_id, user_id } = queryDto;
+
+    const queryBuilder = this.userModuleRepository
+      .createQueryBuilder('um')
+      .innerJoin('modules', 'm', 'm.id = um.module_id')
+      .innerJoin('domains', 'd', 'd.id = m.domain_id')
+      .innerJoin('users', 'u', 'u.user_id = um.user_id')
+      .where('u.deleted_on IS NULL');
+
+    // Apply filters
+    if (user_id) {
+      queryBuilder.andWhere('um.user_id = :user_id', { user_id });
+    }
+
+    if (module_id) {
+      queryBuilder.andWhere('um.module_id = :module_id', { module_id });
+    }
+
+    if (status) {
+      queryBuilder.andWhere('um.status = :status', { status });
+    }
+
+    // Get count before select
+    const total = await queryBuilder.getCount();
+
+    // Select fields
+    queryBuilder.select([
+      'um.id AS id',
+      'um.user_id AS user_id',
+      'u.name AS user_name',
+      'u.email AS user_email',
+      'um.module_id AS module_id',
+      'm.title AS module_title',
+      'd.name AS domain_name',
+      'um.questions_answered AS questions_answered',
+      'um.score AS score',
+      'um.threshold_score AS threshold_score',
+      'um.status AS status',
+      'um.joined_on AS joined_on',
+      'um.completed_on AS completed_on'
+    ]);
+
+    // Pagination
+    queryBuilder
+      .orderBy('um.joined_on', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    const results = await queryBuilder.getRawMany();
+
+    return {
+      data: results,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  // ----------------------------------------------------------------------------
+  // 3. UPDATE OPERATIONS
+  // ----------------------------------------------------------------------------
+
+  /**
+   * Update user module enrollment (questions_answered, score, status)
+   */
+  async updateUserModule(userId: number, moduleId: number, updateDto: UpdateUserModuleDto) {
+    // Validate user exists and is active
+    await this.validateUserExistsAndActive(userId);
+
+    // Find the enrollment
+    const enrollment = await this.userModuleRepository.findOne({
+      where: { user_id: userId, module_id: moduleId }
+    });
+
+    if (!enrollment) {
+      throw new NotFoundException(`No enrollment found for user ${userId} in module ${moduleId}`);
+    }
+
+    // Apply updates using helper
+    this.applyEnrollmentUpdates(enrollment, updateDto);
+
+    const updated = await this.userModuleRepository.save(enrollment);
+
+    return {
+      message: 'User module updated successfully',
+      data: this.mapEnrollmentToDetailedResponse(updated)
+    };
+  }
+
+  /**
+   * Update enrollment by ID (admin operation)
+   */
+  async updateById(enrollmentId: number, updateDto: UpdateUserModuleDto) {
+    // Find the enrollment
+    const enrollment = await this.userModuleRepository.findOne({
+      where: { id: enrollmentId }
+    });
+
+    if (!enrollment) {
+      throw new NotFoundException(`Enrollment with ID ${enrollmentId} not found`);
+    }
+
+    // Validate user exists and is active
+    await this.validateUserExistsAndActive(enrollment.user_id);
+
+    // Apply updates using helper
+    this.applyEnrollmentUpdates(enrollment, updateDto);
+
+    const updated = await this.userModuleRepository.save(enrollment);
+
+    return {
+      message: 'User module updated successfully',
+      data: {
+        ...this.mapEnrollmentToDetailedResponse(updated),
+        user_id: updated.user_id
+      }
+    };
+  }
+
+  // ----------------------------------------------------------------------------
+  // 4. CLEANUP OPERATIONS
+  // ----------------------------------------------------------------------------
+
+  /**
+   * Cleanup all module enrollments for a user (used when deleting a user)
+   * Does not validate if user exists since it's called during deletion
+   */
+  async cleanupUserModules(userId: number): Promise<number> {
+    const enrollments = await this.userModuleRepository.find({
+      where: { user_id: userId }
+    });
+
+    if (enrollments.length > 0) {
+      await this.userModuleRepository.remove(enrollments);
+      console.log(`Cleaned up ${enrollments.length} module enrollment(s) for user ${userId}`);
+    }
+
+    return enrollments.length;
+  }
+
+  // ============================================================================
+  // PRIVATE HELPER METHODS
+  // ============================================================================
+
+  // ----------------------------------------------------------------------------
+  // Validation Helpers
+  // ----------------------------------------------------------------------------
+
+  /**
+   * Validates that a user exists and is active (not soft deleted)
+   * @throws NotFoundException if user doesn't exist or is deleted
+   */
+  private async validateUserExistsAndActive(userId: number): Promise<User> {
+    const user = await this.userRepository.findOne({
+      where: { user_id: userId, deleted_on: IsNull() }
+    });
+
+    if (!user) {
+      // Check if user exists but is soft deleted
+      const deletedUser = await this.userRepository.findOne({
+        where: { user_id: userId }
+      });
+      
+      if (deletedUser && deletedUser.deleted_on) {
+        throw new NotFoundException(`User with ID ${userId} has been deleted`);
+      } else {
+        throw new NotFoundException(`User with ID ${userId} not found`);
+      }
+    }
+
+    return user;
+  }
+
+  /**
+   * Validates that a module exists
+   * @throws NotFoundException if module doesn't exist
+   */
+  private async validateModuleExists(moduleId: number): Promise<Module> {
+    const module = await this.moduleRepository.findOne({
+      where: { id: moduleId }
+    });
+
+    if (!module) {
+      throw new NotFoundException(`Module with ID ${moduleId} not found`);
+    }
+
+    return module;
+  }
+
+  /**
+   * Validates that a user has access to a module through domain assignment
+   * @throws ForbiddenException if user doesn't have access
+   */
+  private async validateUserHasModuleAccess(userId: number, moduleId: number): Promise<void> {
+    const hasAccess = await this.userDomainRepository
+      .createQueryBuilder('ud')
+      .innerJoin('modules', 'm', 'm.domain_id = ud.domain_id')
+      .where('ud.user_id = :userId', { userId })
+      .andWhere('m.id = :moduleId', { moduleId })
+      .getOne();
+
+    if (!hasAccess) {
+      throw new ForbiddenException(
+        `User does not have access to this module. User must be assigned to the module's domain first.`
+      );
+    }
+  }
+
+  // ----------------------------------------------------------------------------
+  // Update Helpers
+  // ----------------------------------------------------------------------------
+
+  /**
+   * Applies updates to an enrollment entity
+   * Handles score, questions_answered, threshold_score, and status updates
+   * Auto-updates status based on score vs threshold
+   */
+  private applyEnrollmentUpdates(enrollment: UserModule, updateDto: UpdateUserModuleDto): void {
+    // Update basic fields
+    if (updateDto.questions_answered !== undefined) {
+      enrollment.questions_answered = updateDto.questions_answered;
+    }
+
+    if (updateDto.score !== undefined) {
+      enrollment.score = updateDto.score;
+    }
+
+    if (updateDto.threshold_score !== undefined) {
+      enrollment.threshold_score = updateDto.threshold_score;
+    }
+
+    // Auto-update status based on score vs threshold
+    if (updateDto.score !== undefined) {
+      const finalScore = updateDto.score;
+      const threshold = updateDto.threshold_score !== undefined 
+        ? updateDto.threshold_score 
+        : enrollment.threshold_score;
+      
+      if (finalScore >= threshold) {
+        enrollment.status = 'passed';
+        enrollment.completed_on = new Date();
+      } else {
+        enrollment.status = 'failed';
+        enrollment.completed_on = new Date();
+      }
+    } else if (updateDto.status !== undefined) {
+      // Allow manual status override
+      enrollment.status = updateDto.status;
+      
+      // Set completed_on timestamp if status is final
+      if (['completed', 'passed', 'failed'].includes(updateDto.status) && !enrollment.completed_on) {
+        enrollment.completed_on = new Date();
+      }
+    }
+  }
+
+  // ----------------------------------------------------------------------------
+  // Response Mapping Helpers
+  // ----------------------------------------------------------------------------
+
+  /**
+   * Maps enrollment entity to basic response object
+   */
+  private mapEnrollmentToResponse(enrollment: UserModule) {
+    return {
+      id: enrollment.id,
+      module_id: enrollment.module_id,
+      status: enrollment.status,
+      threshold_score: enrollment.threshold_score,
+      joined_on: enrollment.joined_on
+    };
+  }
+
+  /**
+   * Maps enrollment entity to detailed response object
+   */
+  private mapEnrollmentToDetailedResponse(enrollment: UserModule) {
+    return {
+      id: enrollment.id,
+      module_id: enrollment.module_id,
+      questions_answered: enrollment.questions_answered,
+      score: enrollment.score,
+      threshold_score: enrollment.threshold_score,
+      status: enrollment.status,
+      passed: enrollment.score >= enrollment.threshold_score,
+      joined_on: enrollment.joined_on,
+      completed_on: enrollment.completed_on
+    };
+  }
+}

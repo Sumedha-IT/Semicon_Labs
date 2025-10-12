@@ -1,0 +1,19 @@
+
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: semiconlabs_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: YOUR_PASSWORD_HERE
+      POSTGRES_DB: semiconlabs
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+
