@@ -170,4 +170,25 @@ export class ModulesController {
     // For now, this is a placeholder that needs the service
     return this.moduleUsersService.unenrollUser(uid, moduleId);
   }
+
+  // Module-Domain linking endpoints
+  @Post(':id/domains')
+  @Roles(UserRole.PLATFORM_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  async linkDomains(@Param('id', ParseIntPipe) id: number, @Body() body: { domainIds: number[] }) {
+    return this.modulesService.linkDomains(id, body.domainIds);
+  }
+
+  @Get(':id/domains')
+  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER)
+  async getModuleDomains(@Param('id', ParseIntPipe) id: number) {
+    return this.modulesService.getModuleDomains(id);
+  }
+
+  @Delete(':id/domains/:domainId')
+  @Roles(UserRole.PLATFORM_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  async unlinkDomain(@Param('id', ParseIntPipe) id: number, @Param('domainId', ParseIntPipe) domainId: number) {
+    return this.modulesService.unlinkDomain(id, domainId);
+  }
 }

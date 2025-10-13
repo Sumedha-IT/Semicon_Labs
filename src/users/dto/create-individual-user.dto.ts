@@ -1,4 +1,5 @@
-import { IsEmail, IsString, IsOptional, IsDateString, MinLength, Length, Matches, IsPositive, IsNumber } from 'class-validator';
+import { IsEmail, IsString, IsOptional, IsDateString, MinLength, Length, Matches, IsPositive, IsNumber, IsEnum } from 'class-validator';
+import { UserRole } from '../../common/constants/user-roles';
 
 export class CreateIndividualUserDto {
   @IsString({ message: 'Name must be a string' })
@@ -42,5 +43,7 @@ export class CreateIndividualUserDto {
   @IsPositive({ message: 'Tool ID must be a positive number' })
   tool_id: number;
 
-  
+  @IsOptional()
+  @IsEnum(UserRole, { message: 'Role must be a valid user role' })
+  role?: UserRole;
 }

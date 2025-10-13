@@ -8,6 +8,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorator/roles.decorator';
 import { UserRole } from '../common/constants/user-roles';
 import { CreateUserDto } from './dto/create-user.dto';
+import { CreateIndividualUserDto } from './dto/create-individual-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { Public } from '../common/decorator/public.decorator';
 import { UserDomainsService } from '../user-domains/user-domains.service';
@@ -23,20 +24,27 @@ export class UsersV1Controller {
     private readonly userModulesService: UserModulesService,
   ) {}
 
-  // Public registration endpoint - ONLY for Platform Admin (one-time only)
-  // Throws 409 Conflict if Platform Admin already exists
-  // Throws 403 Forbidden if trying to create any other role
+  // Universal registration endpoint
+  // Public for individual learners (org_id not provided or null)
+  // Requires authentication for organizational users (org_id provided)
   @Public()
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   async register(@Body() createUserDto: CreateUserDto) {
-    // Only allow Platform Admin creation through this public endpoint
-    if (createUserDto.role !== UserRole.PLATFORM_ADMIN) {
-      throw new BadRequestException(
-        `Public registration is only allowed for Platform Admin. To create ${createUserDto.role}, please use POST /v1/users with Platform Admin authentication.`
-      );
+    // If no org_id provided or org_id is null, treat as individual learner registration
+    if (!createUserDto.org_id) {
+      // Force individual learner fields
+      const individualUserData = {
+        ...createUserDto,
+        org_id: null as any,
+        manager_id: null as any,
+        role: UserRole.LEARNER
+      };
+      const user = await this.usersService.create(individualUserData);
+      return { user_id: user.user_id };
     }
     
+    // For organizational users (org_id provided), create normally
     const user = await this.usersService.create(createUserDto);
     return { user_id: user.user_id };
   }
@@ -419,30 +427,52 @@ export class UsersV1Controller {
   // User-centric module operations
 
   @Post(':id/modules/enroll')
-  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER)
+  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER, UserRole.LEARNER)
   @HttpCode(HttpStatus.CREATED)
   async enrollInModule(
     @Param('id') id: string, 
-    @Body() enrollDto: EnrollModuleDto
+    @Body() enrollDto: EnrollModuleDto,
+    @Request() req
   ) {
     const userId = parseInt(id, 10);
     if (isNaN(userId)) {
       throw new BadRequestException('Invalid user ID');
     }
+    
+    // Learners can only enroll themselves
+    if (req.user.role === UserRole.LEARNER && req.user.userId !== userId) {
+      throw new BadRequestException('Learners can only enroll themselves in modules');
+    }
+    
     return this.userModulesService.enroll(userId, enrollDto);
   }
 
   @Get(':id/modules/available')
-  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER)
+  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER, UserRole.LEARNER)
   async getAvailableModules(
     @Param('id') id: string,
-    @Query() queryDto: UserModuleQueryDto
+    @Query() queryDto: UserModuleQueryDto,
+    @Request() req,
+    @Res() res: Response
   ) {
     const userId = parseInt(id, 10);
     if (isNaN(userId)) {
       throw new BadRequestException('Invalid user ID');
     }
-    return this.userModulesService.getAvailableModules(userId, queryDto);
+    
+    // Learners can only view their own available modules
+    if (req.user.role === UserRole.LEARNER && req.user.userId !== userId) {
+      throw new BadRequestException('Learners can only view their own available modules');
+    }
+    
+    const result = await this.userModulesService.getAvailableModules(userId, queryDto);
+    
+    // Return 204 No Content if no results found
+    if (result.total === 0) {
+      return res.status(HttpStatus.NO_CONTENT).send();
+    }
+    
+    return res.status(HttpStatus.OK).json(result);
   }
 
   @Get(':id/modules/:moduleId')
@@ -460,16 +490,31 @@ export class UsersV1Controller {
   }
 
   @Get(':id/modules')
-  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER)
+  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER, UserRole.LEARNER)
   async getUserModules(
     @Param('id') id: string,
-    @Query() queryDto: UserModuleQueryDto
+    @Query() queryDto: UserModuleQueryDto,
+    @Request() req,
+    @Res() res: Response
   ) {
     const userId = parseInt(id, 10);
     if (isNaN(userId)) {
       throw new BadRequestException('Invalid user ID');
     }
-    return this.userModulesService.getUserModules(userId, queryDto);
+    
+    // Learners can only view their own modules
+    if (req.user.role === UserRole.LEARNER && req.user.userId !== userId) {
+      throw new BadRequestException('Learners can only view their own modules');
+    }
+    
+    const result = await this.userModulesService.getUserModules(userId, queryDto);
+    
+    // Return 204 No Content if no results found
+    if (result.total === 0) {
+      return res.status(HttpStatus.NO_CONTENT).send();
+    }
+    
+    return res.status(HttpStatus.OK).json(result);
   }
 
   @Patch(':id/modules/:moduleId')

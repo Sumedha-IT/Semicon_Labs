@@ -1,8 +1,6 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn, Index } from 'typeorm';
-import { Domain } from '../../domains/entities/domain.entity';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 
 @Entity({ name: 'modules' })
-@Index(['title', 'domainId'], { unique: true }) // Composite unique index: same title allowed in different domains
 export class Module {
   @PrimaryGeneratedColumn({ name: 'id' })
   id: number;
@@ -28,10 +26,5 @@ export class Module {
   @UpdateDateColumn({ name: 'updated_on', type: 'timestamptz' })
   updated_on: Date;
 
-  @Column({ name: 'domain_id', nullable: false })
-  domainId: number;
-
-  @ManyToOne(() => Domain, { nullable: false, onDelete: 'CASCADE' })//if domain is deleted, all modules related to it will be deleted
-  @JoinColumn({ name: 'domain_id' })
-  domain: Domain;
+  // Many-to-many relationship with domains handled through domain_modules join table
 }

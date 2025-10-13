@@ -141,7 +141,8 @@ export class UserModulesService {
     const queryBuilder = this.userModuleRepository
       .createQueryBuilder('um')
       .innerJoin('modules', 'm', 'm.id = um.module_id')
-      .innerJoin('domains', 'd', 'd.id = m.domain_id')
+      .innerJoin('domain_modules', 'dm', 'dm.module_id = m.id')
+      .innerJoin('domains', 'd', 'd.id = dm.domain_id')
       .where('um.user_id = :userId', { userId });
 
     // Apply filters
@@ -198,7 +199,8 @@ export class UserModulesService {
     const progress = await this.userModuleRepository
       .createQueryBuilder('um')
       .innerJoin('modules', 'm', 'm.id = um.module_id')
-      .innerJoin('domains', 'd', 'd.id = m.domain_id')
+      .innerJoin('domain_modules', 'dm', 'dm.module_id = m.id')
+      .innerJoin('domains', 'd', 'd.id = dm.domain_id')
       .where('um.user_id = :userId', { userId })
       .andWhere('um.module_id = :moduleId', { moduleId })
       .select([
@@ -228,6 +230,7 @@ export class UserModulesService {
 
   /**
    * Get available modules (from user's domains) that user hasn't enrolled in yet
+   * Modules that belong to at least one of the user's assigned domains
    */
   async getAvailableModules(userId: number, queryDto: UserModuleQueryDto) {
     const { page = 1, limit = 10 } = queryDto;
@@ -238,31 +241,34 @@ export class UserModulesService {
     // Get modules from user's domains that aren't enrolled yet
     const queryBuilder = this.moduleRepository
       .createQueryBuilder('m')
-      .innerJoin('user_domains', 'ud', 'ud.domain_id = m.domain_id')
-      .innerJoin('domains', 'd', 'd.id = m.domain_id')
+      .innerJoin('domain_modules', 'dm', 'dm.module_id = m.id')
+      .innerJoin('user_domains', 'ud', 'ud.domain_id = dm.domain_id')
+      .innerJoin('domains', 'd', 'd.id = dm.domain_id')
       .leftJoin('user_modules', 'um', 'um.module_id = m.id AND um.user_id = :userId', { userId })
       .where('ud.user_id = :userId', { userId })
       .andWhere('um.id IS NULL'); // Not enrolled yet
 
-    // Get count before select
-    const total = await queryBuilder.getCount();
+    // Get count (distinct modules)
+    const totalQuery = queryBuilder.clone();
+    const totalResult = await totalQuery
+      .select('COUNT(DISTINCT m.id)', 'total')
+      .getRawOne();
+    const total = parseInt(totalResult?.total || 0);
 
-    // Apply select and pagination
-    queryBuilder.select([
-      'm.id AS id',
-      'm.title AS title',
-      'm.desc AS description',
-      'm.duration AS duration',
-      'm.level AS level',
-      'd.name AS domain_name',
-      'd.id AS domain_id'
-    ]);
-
-    // Pagination
+    // Apply select and pagination (with distinct modules and aggregated domains)
     queryBuilder
+      .select([
+        'm.id AS id',
+        'm.title AS title',
+        'm.desc AS description',
+        'm.duration AS duration',
+        'm.level AS level',
+        `STRING_AGG(DISTINCT d.name, ', ' ORDER BY d.name) AS domain_names`
+      ])
+      .groupBy('m.id, m.title, m.desc, m.duration, m.level')
       .orderBy('m.created_on', 'DESC')
-      .skip((page - 1) * limit)
-      .take(limit);
+      .offset((page - 1) * limit)
+      .limit(limit);
 
     const results = await queryBuilder.getRawMany();
 
@@ -282,7 +288,8 @@ export class UserModulesService {
     const enrollment = await this.userModuleRepository
       .createQueryBuilder('um')
       .innerJoin('modules', 'm', 'm.id = um.module_id')
-      .innerJoin('domains', 'd', 'd.id = m.domain_id')
+      .innerJoin('domain_modules', 'dm', 'dm.module_id = m.id')
+      .innerJoin('domains', 'd', 'd.id = dm.domain_id')
       .innerJoin('users', 'u', 'u.user_id = um.user_id')
       .where('um.id = :enrollmentId', { enrollmentId })
       .andWhere('u.deleted_on IS NULL')
@@ -323,7 +330,8 @@ export class UserModulesService {
     const queryBuilder = this.userModuleRepository
       .createQueryBuilder('um')
       .innerJoin('modules', 'm', 'm.id = um.module_id')
-      .innerJoin('domains', 'd', 'd.id = m.domain_id')
+      .innerJoin('domain_modules', 'dm', 'dm.module_id = m.id')
+      .innerJoin('domains', 'd', 'd.id = dm.domain_id')
       .innerJoin('users', 'u', 'u.user_id = um.user_id')
       .where('u.deleted_on IS NULL');
 
@@ -510,19 +518,20 @@ export class UserModulesService {
 
   /**
    * Validates that a user has access to a module through domain assignment
+   * User must be assigned to at least one of the module's domains
    * @throws ForbiddenException if user doesn't have access
    */
   private async validateUserHasModuleAccess(userId: number, moduleId: number): Promise<void> {
     const hasAccess = await this.userDomainRepository
       .createQueryBuilder('ud')
-      .innerJoin('modules', 'm', 'm.domain_id = ud.domain_id')
+      .innerJoin('domain_modules', 'dm', 'dm.domain_id = ud.domain_id')
       .where('ud.user_id = :userId', { userId })
-      .andWhere('m.id = :moduleId', { moduleId })
+      .andWhere('dm.module_id = :moduleId', { moduleId })
       .getOne();
 
     if (!hasAccess) {
       throw new ForbiddenException(
-        `User does not have access to this module. User must be assigned to the module's domain first.`
+        `User does not have access to this module. User must be assigned to at least one of the module's domains first.`
       );
     }
   }

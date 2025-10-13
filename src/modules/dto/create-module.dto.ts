@@ -1,4 +1,4 @@
-import { IsString, IsNumber, IsArray, IsNotEmpty, MaxLength, IsIn } from 'class-validator';
+import { IsString, IsNumber, IsArray, IsNotEmpty, MaxLength, IsIn, ArrayMinSize, IsInt, IsPositive } from 'class-validator';
 
 export class CreateModuleDto {
   @IsString()
@@ -24,8 +24,10 @@ export class CreateModuleDto {
   @IsIn(['Beginner', 'Intermediate', 'Advanced'])
   level: string;
 
-  @IsNumber()
-  @IsNotEmpty()
-  domainId: number;
+  @IsArray()
+  @ArrayMinSize(1, { message: 'At least one domain must be provided' })
+  @IsInt({ each: true, message: 'Each domain ID must be an integer' })
+  @IsPositive({ each: true, message: 'Each domain ID must be positive' })
+  domainIds: number[];
 }
 
