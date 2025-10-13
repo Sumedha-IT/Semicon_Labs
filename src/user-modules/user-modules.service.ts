@@ -364,8 +364,10 @@ export class UserModulesService {
   async findAllEnrollments(queryDto: UserModuleQueryDto) {
     const { page = 1, limit = 10, status, module_id, user_id } = queryDto;
 
-    // Build where conditions
-    const where: any = {};
+    // Build where conditions - filter deleted users at database level
+    const where: any = {
+      user: { deleted_on: IsNull() }  // Only include active users
+    };
     if (user_id) {
       where.user_id = user_id;
     }
@@ -376,7 +378,7 @@ export class UserModulesService {
       where.status = status;
     }
 
-    // Use entity objects with relations and filter deleted users
+    // Use entity objects with relations
     const [enrollments, total] = await this.userModuleRepository.findAndCount({
       where,
       relations: {
@@ -392,34 +394,32 @@ export class UserModulesService {
       take: limit,
     });
 
-    // Filter out deleted users and map to response format
-    const data = enrollments
-      .filter((enrollment) => !enrollment.user.deleted_on)
-      .map((enrollment) => {
-        const firstDomain = enrollment.module.domainModules[0]?.domain;
-        return {
-          id: enrollment.id,
-          user_id: enrollment.user_id,
-          user_name: enrollment.user.name,
-          user_email: enrollment.user.email,
-          module_id: enrollment.module_id,
-          module_title: enrollment.module.title,
-          domain_name: firstDomain?.name || null,
-          questions_answered: enrollment.questions_answered,
-          score: enrollment.score,
-          threshold_score: enrollment.threshold_score,
-          status: enrollment.status,
-          joined_on: enrollment.joined_on,
-          completed_on: enrollment.completed_on,
-        };
-      });
+    // Map to response format
+    const data = enrollments.map((enrollment) => {
+      const firstDomain = enrollment.module.domainModules[0]?.domain;
+      return {
+        id: enrollment.id,
+        user_id: enrollment.user_id,
+        user_name: enrollment.user.name,
+        user_email: enrollment.user.email,
+        module_id: enrollment.module_id,
+        module_title: enrollment.module.title,
+        domain_name: firstDomain?.name || null,
+        questions_answered: enrollment.questions_answered,
+        score: enrollment.score,
+        threshold_score: enrollment.threshold_score,
+        status: enrollment.status,
+        joined_on: enrollment.joined_on,
+        completed_on: enrollment.completed_on,
+      };
+    });
 
     return {
       data,
-      total: data.length, // Adjust total after filtering
+      total,
       page,
       limit,
-      totalPages: Math.ceil(data.length / limit),
+      totalPages: Math.ceil(total / limit),
     };
   }
 
