@@ -1,11 +1,20 @@
-import { Injectable, NotFoundException, ConflictException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, IsNull } from 'typeorm';
 import { UserModule } from './entities/user-module.entity';
 import { User } from '../users/entities/user.entity';
 import { Module } from '../modules/entities/module.entity';
 import { UserDomain } from '../user-domains/entities/user-domain.entity';
-import { EnrollModuleDto, UpdateUserModuleDto, UserModuleQueryDto } from './dto/user-module.dto';
+import {
+  EnrollModuleDto,
+  UpdateUserModuleDto,
+  UserModuleQueryDto,
+} from './dto/user-module.dto';
 
 @Injectable()
 export class UserModulesService {
@@ -37,7 +46,9 @@ export class UserModulesService {
 
     // Validate module_id
     if (!module_id || module_id === null || module_id === undefined) {
-      throw new ConflictException('module_id is required and must be a valid number');
+      throw new ConflictException(
+        'module_id is required and must be a valid number',
+      );
     }
 
     // Validate user exists and is active
@@ -51,31 +62,31 @@ export class UserModulesService {
 
     // Check if already enrolled
     const existingEnrollment = await this.userModuleRepository.findOne({
-      where: { user_id: userId, module_id }
+      where: { user_id: userId, module_id },
     });
 
     if (existingEnrollment) {
       return {
         message: 'User is already enrolled in this module',
-        enrollment: this.mapEnrollmentToResponse(existingEnrollment)
+        enrollment: this.mapEnrollmentToResponse(existingEnrollment),
       };
     }
 
-    // Create enrollment
+    // Create enrollment with threshold_score from module
     const enrollment = this.userModuleRepository.create({
       user_id: userId,
       module_id,
       status: 'not_started',
       questions_answered: 0,
       score: 0,
-      threshold_score: 70
+      threshold_score: module.threshold_score,
     });
 
     const saved = await this.userModuleRepository.save(enrollment);
 
     return {
       message: 'Successfully enrolled in module',
-      enrollment: this.mapEnrollmentToResponse(saved)
+      enrollment: this.mapEnrollmentToResponse(saved),
     };
   }
 
@@ -84,11 +95,13 @@ export class UserModulesService {
    */
   async unenroll(enrollmentId: number) {
     const enrollment = await this.userModuleRepository.findOne({
-      where: { id: enrollmentId }
+      where: { id: enrollmentId },
     });
 
     if (!enrollment) {
-      throw new NotFoundException(`Enrollment with ID ${enrollmentId} not found`);
+      throw new NotFoundException(
+        `Enrollment with ID ${enrollmentId} not found`,
+      );
     }
 
     // Validate user exists and is active
@@ -98,7 +111,7 @@ export class UserModulesService {
 
     return {
       success: true,
-      message: `User ${enrollment.user_id} unenrolled from module ${enrollment.module_id}`
+      message: `User ${enrollment.user_id} unenrolled from module ${enrollment.module_id}`,
     };
   }
 
@@ -110,18 +123,20 @@ export class UserModulesService {
     await this.validateUserExistsAndActive(userId);
 
     const enrollment = await this.userModuleRepository.findOne({
-      where: { user_id: userId, module_id: moduleId }
+      where: { user_id: userId, module_id: moduleId },
     });
 
     if (!enrollment) {
-      throw new NotFoundException(`No enrollment found for user ${userId} in module ${moduleId}`);
+      throw new NotFoundException(
+        `No enrollment found for user ${userId} in module ${moduleId}`,
+      );
     }
 
     await this.userModuleRepository.remove(enrollment);
 
     return {
       success: true,
-      message: `User ${userId} unenrolled from module ${moduleId}`
+      message: `User ${userId} unenrolled from module ${moduleId}`,
     };
   }
 
@@ -138,50 +153,50 @@ export class UserModulesService {
     // Validate user exists and is active
     await this.validateUserExistsAndActive(userId);
 
-    const queryBuilder = this.userModuleRepository
-      .createQueryBuilder('um')
-      .innerJoin('modules', 'm', 'm.id = um.module_id')
-      .innerJoin('domain_modules', 'dm', 'dm.module_id = m.id')
-      .innerJoin('domains', 'd', 'd.id = dm.domain_id')
-      .where('um.user_id = :userId', { userId });
-
-    // Apply filters
+    // Build where conditions
+    const where: any = { user_id: userId };
     if (status) {
-      queryBuilder.andWhere('um.status = :status', { status });
+      where.status = status;
     }
-
     if (module_id) {
-      queryBuilder.andWhere('um.module_id = :module_id', { module_id });
+      where.module_id = module_id;
     }
 
-    // Get count before select
-    const total = await queryBuilder.getCount();
+    // Use entity objects with relations
+    const [enrollments, total] = await this.userModuleRepository.findAndCount({
+      where,
+      relations: {
+        module: {
+          domainModules: {
+            domain: true,
+          },
+        },
+      },
+      order: { joined_on: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
 
-    // Select fields
-    queryBuilder.select([
-      'um.id AS id',
-      'um.module_id AS module_id',
-      'm.title AS module_title',
-      'm.desc AS module_description',
-      'd.name AS domain_name',
-      'um.questions_answered AS questions_answered',
-      'um.score AS score',
-      'um.threshold_score AS threshold_score',
-      'um.status AS status',
-      'um.joined_on AS joined_on',
-      'um.completed_on AS completed_on'
-    ]);
-
-    // Pagination
-    queryBuilder
-      .orderBy('um.joined_on', 'DESC')
-      .skip((page - 1) * limit)
-      .take(limit);
-
-    const results = await queryBuilder.getRawMany();
+    // Map to response format
+    const data = enrollments.map((enrollment) => {
+      const firstDomain = enrollment.module.domainModules[0]?.domain;
+      return {
+        id: enrollment.id,
+        module_id: enrollment.module_id,
+        module_title: enrollment.module.title,
+        module_description: enrollment.module.desc,
+        domain_name: firstDomain?.name || null,
+        questions_answered: enrollment.questions_answered,
+        score: enrollment.score,
+        threshold_score: enrollment.threshold_score,
+        status: enrollment.status,
+        joined_on: enrollment.joined_on,
+        completed_on: enrollment.completed_on,
+      };
+    });
 
     return {
-      data: results,
+      data,
       total,
       page,
       limit,
@@ -196,36 +211,41 @@ export class UserModulesService {
     // Validate user exists and is active
     await this.validateUserExistsAndActive(userId);
 
-    const progress = await this.userModuleRepository
-      .createQueryBuilder('um')
-      .innerJoin('modules', 'm', 'm.id = um.module_id')
-      .innerJoin('domain_modules', 'dm', 'dm.module_id = m.id')
-      .innerJoin('domains', 'd', 'd.id = dm.domain_id')
-      .where('um.user_id = :userId', { userId })
-      .andWhere('um.module_id = :moduleId', { moduleId })
-      .select([
-        'um.id AS id',
-        'um.module_id AS module_id',
-        'm.title AS module_title',
-        'm.desc AS module_description',
-        'd.name AS domain_name',
-        'um.questions_answered AS questions_answered',
-        'um.score AS score',
-        'um.threshold_score AS threshold_score',
-        'um.status AS status',
-        'um.joined_on AS joined_on',
-        'um.completed_on AS completed_on'
-      ])
-      .getRawOne();
+    // Use entity objects with relations instead of QueryBuilder
+    const enrollment = await this.userModuleRepository.findOne({
+      where: { user_id: userId, module_id: moduleId },
+      relations: {
+        module: {
+          domainModules: {
+            domain: true,
+          },
+        },
+      },
+    });
 
-    if (!progress) {
-      throw new NotFoundException(`No enrollment found for user ${userId} in module ${moduleId}`);
+    if (!enrollment) {
+      throw new NotFoundException(
+        `No enrollment found for user ${userId} in module ${moduleId}`,
+      );
     }
 
-    // Add pass/fail indicator
-    progress.passed = progress.score >= progress.threshold_score;
+    // Get first domain name (modules can belong to multiple domains)
+    const firstDomain = enrollment.module.domainModules[0]?.domain;
 
-    return progress;
+    return {
+      id: enrollment.id,
+      module_id: enrollment.module_id,
+      module_title: enrollment.module.title,
+      module_description: enrollment.module.desc,
+      domain_name: firstDomain?.name || null,
+      questions_answered: enrollment.questions_answered,
+      score: enrollment.score,
+      threshold_score: enrollment.threshold_score,
+      status: enrollment.status,
+      joined_on: enrollment.joined_on,
+      completed_on: enrollment.completed_on,
+      passed: enrollment.score >= enrollment.threshold_score,
+    };
   }
 
   /**
@@ -244,7 +264,12 @@ export class UserModulesService {
       .innerJoin('domain_modules', 'dm', 'dm.module_id = m.id')
       .innerJoin('user_domains', 'ud', 'ud.domain_id = dm.domain_id')
       .innerJoin('domains', 'd', 'd.id = dm.domain_id')
-      .leftJoin('user_modules', 'um', 'um.module_id = m.id AND um.user_id = :userId', { userId })
+      .leftJoin(
+        'user_modules',
+        'um',
+        'um.module_id = m.id AND um.user_id = :userId',
+        { userId },
+      )
       .where('ud.user_id = :userId', { userId })
       .andWhere('um.id IS NULL'); // Not enrolled yet
 
@@ -263,7 +288,7 @@ export class UserModulesService {
         'm.desc AS description',
         'm.duration AS duration',
         'm.level AS level',
-        `STRING_AGG(DISTINCT d.name, ', ' ORDER BY d.name) AS domain_names`
+        `STRING_AGG(DISTINCT d.name, ', ' ORDER BY d.name) AS domain_names`,
       ])
       .groupBy('m.id, m.title, m.desc, m.duration, m.level')
       .orderBy('m.created_on', 'DESC')
@@ -285,40 +310,52 @@ export class UserModulesService {
    * Find enrollment by ID (admin operation)
    */
   async findOneById(enrollmentId: number) {
-    const enrollment = await this.userModuleRepository
-      .createQueryBuilder('um')
-      .innerJoin('modules', 'm', 'm.id = um.module_id')
-      .innerJoin('domain_modules', 'dm', 'dm.module_id = m.id')
-      .innerJoin('domains', 'd', 'd.id = dm.domain_id')
-      .innerJoin('users', 'u', 'u.user_id = um.user_id')
-      .where('um.id = :enrollmentId', { enrollmentId })
-      .andWhere('u.deleted_on IS NULL')
-      .select([
-        'um.id AS id',
-        'um.user_id AS user_id',
-        'u.name AS user_name',
-        'u.email AS user_email',
-        'um.module_id AS module_id',
-        'm.title AS module_title',
-        'm.desc AS module_description',
-        'd.name AS domain_name',
-        'um.questions_answered AS questions_answered',
-        'um.score AS score',
-        'um.threshold_score AS threshold_score',
-        'um.status AS status',
-        'um.joined_on AS joined_on',
-        'um.completed_on AS completed_on'
-      ])
-      .getRawOne();
+    // Use entity objects with relations
+    const enrollment = await this.userModuleRepository.findOne({
+      where: { id: enrollmentId },
+      relations: {
+        user: true,
+        module: {
+          domainModules: {
+            domain: true,
+          },
+        },
+      },
+    });
 
     if (!enrollment) {
-      throw new NotFoundException(`Enrollment with ID ${enrollmentId} not found or user has been deleted`);
+      throw new NotFoundException(
+        `Enrollment with ID ${enrollmentId} not found`,
+      );
     }
 
-    // Add pass/fail indicator
-    enrollment.passed = enrollment.score >= enrollment.threshold_score;
+    // Check if user was deleted
+    if (enrollment.user.deleted_on) {
+      throw new NotFoundException(
+        `Enrollment with ID ${enrollmentId} not found or user has been deleted`,
+      );
+    }
 
-    return enrollment;
+    // Get first domain name
+    const firstDomain = enrollment.module.domainModules[0]?.domain;
+
+    return {
+      id: enrollment.id,
+      user_id: enrollment.user_id,
+      user_name: enrollment.user.name,
+      user_email: enrollment.user.email,
+      module_id: enrollment.module_id,
+      module_title: enrollment.module.title,
+      module_description: enrollment.module.desc,
+      domain_name: firstDomain?.name || null,
+      questions_answered: enrollment.questions_answered,
+      score: enrollment.score,
+      threshold_score: enrollment.threshold_score,
+      status: enrollment.status,
+      joined_on: enrollment.joined_on,
+      completed_on: enrollment.completed_on,
+      passed: enrollment.score >= enrollment.threshold_score,
+    };
   }
 
   /**
@@ -327,61 +364,62 @@ export class UserModulesService {
   async findAllEnrollments(queryDto: UserModuleQueryDto) {
     const { page = 1, limit = 10, status, module_id, user_id } = queryDto;
 
-    const queryBuilder = this.userModuleRepository
-      .createQueryBuilder('um')
-      .innerJoin('modules', 'm', 'm.id = um.module_id')
-      .innerJoin('domain_modules', 'dm', 'dm.module_id = m.id')
-      .innerJoin('domains', 'd', 'd.id = dm.domain_id')
-      .innerJoin('users', 'u', 'u.user_id = um.user_id')
-      .where('u.deleted_on IS NULL');
-
-    // Apply filters
+    // Build where conditions
+    const where: any = {};
     if (user_id) {
-      queryBuilder.andWhere('um.user_id = :user_id', { user_id });
+      where.user_id = user_id;
     }
-
     if (module_id) {
-      queryBuilder.andWhere('um.module_id = :module_id', { module_id });
+      where.module_id = module_id;
     }
-
     if (status) {
-      queryBuilder.andWhere('um.status = :status', { status });
+      where.status = status;
     }
 
-    // Get count before select
-    const total = await queryBuilder.getCount();
+    // Use entity objects with relations and filter deleted users
+    const [enrollments, total] = await this.userModuleRepository.findAndCount({
+      where,
+      relations: {
+        user: true,
+        module: {
+          domainModules: {
+            domain: true,
+          },
+        },
+      },
+      order: { joined_on: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
 
-    // Select fields
-    queryBuilder.select([
-      'um.id AS id',
-      'um.user_id AS user_id',
-      'u.name AS user_name',
-      'u.email AS user_email',
-      'um.module_id AS module_id',
-      'm.title AS module_title',
-      'd.name AS domain_name',
-      'um.questions_answered AS questions_answered',
-      'um.score AS score',
-      'um.threshold_score AS threshold_score',
-      'um.status AS status',
-      'um.joined_on AS joined_on',
-      'um.completed_on AS completed_on'
-    ]);
-
-    // Pagination
-    queryBuilder
-      .orderBy('um.joined_on', 'DESC')
-      .skip((page - 1) * limit)
-      .take(limit);
-
-    const results = await queryBuilder.getRawMany();
+    // Filter out deleted users and map to response format
+    const data = enrollments
+      .filter((enrollment) => !enrollment.user.deleted_on)
+      .map((enrollment) => {
+        const firstDomain = enrollment.module.domainModules[0]?.domain;
+        return {
+          id: enrollment.id,
+          user_id: enrollment.user_id,
+          user_name: enrollment.user.name,
+          user_email: enrollment.user.email,
+          module_id: enrollment.module_id,
+          module_title: enrollment.module.title,
+          domain_name: firstDomain?.name || null,
+          questions_answered: enrollment.questions_answered,
+          score: enrollment.score,
+          threshold_score: enrollment.threshold_score,
+          status: enrollment.status,
+          joined_on: enrollment.joined_on,
+          completed_on: enrollment.completed_on,
+        };
+      });
 
     return {
-      data: results,
-      total,
+      data,
+      total: data.length, // Adjust total after filtering
       page,
       limit,
-      totalPages: Math.ceil(total / limit),
+      totalPages: Math.ceil(data.length / limit),
     };
   }
 
@@ -392,17 +430,23 @@ export class UserModulesService {
   /**
    * Update user module enrollment (questions_answered, score, status)
    */
-  async updateUserModule(userId: number, moduleId: number, updateDto: UpdateUserModuleDto) {
+  async updateUserModule(
+    userId: number,
+    moduleId: number,
+    updateDto: UpdateUserModuleDto,
+  ) {
     // Validate user exists and is active
     await this.validateUserExistsAndActive(userId);
 
     // Find the enrollment
     const enrollment = await this.userModuleRepository.findOne({
-      where: { user_id: userId, module_id: moduleId }
+      where: { user_id: userId, module_id: moduleId },
     });
 
     if (!enrollment) {
-      throw new NotFoundException(`No enrollment found for user ${userId} in module ${moduleId}`);
+      throw new NotFoundException(
+        `No enrollment found for user ${userId} in module ${moduleId}`,
+      );
     }
 
     // Apply updates using helper
@@ -412,7 +456,7 @@ export class UserModulesService {
 
     return {
       message: 'User module updated successfully',
-      data: this.mapEnrollmentToDetailedResponse(updated)
+      data: this.mapEnrollmentToDetailedResponse(updated),
     };
   }
 
@@ -422,11 +466,13 @@ export class UserModulesService {
   async updateById(enrollmentId: number, updateDto: UpdateUserModuleDto) {
     // Find the enrollment
     const enrollment = await this.userModuleRepository.findOne({
-      where: { id: enrollmentId }
+      where: { id: enrollmentId },
     });
 
     if (!enrollment) {
-      throw new NotFoundException(`Enrollment with ID ${enrollmentId} not found`);
+      throw new NotFoundException(
+        `Enrollment with ID ${enrollmentId} not found`,
+      );
     }
 
     // Validate user exists and is active
@@ -441,8 +487,8 @@ export class UserModulesService {
       message: 'User module updated successfully',
       data: {
         ...this.mapEnrollmentToDetailedResponse(updated),
-        user_id: updated.user_id
-      }
+        user_id: updated.user_id,
+      },
     };
   }
 
@@ -456,12 +502,14 @@ export class UserModulesService {
    */
   async cleanupUserModules(userId: number): Promise<number> {
     const enrollments = await this.userModuleRepository.find({
-      where: { user_id: userId }
+      where: { user_id: userId },
     });
 
     if (enrollments.length > 0) {
       await this.userModuleRepository.remove(enrollments);
-      console.log(`Cleaned up ${enrollments.length} module enrollment(s) for user ${userId}`);
+      console.log(
+        `Cleaned up ${enrollments.length} module enrollment(s) for user ${userId}`,
+      );
     }
 
     return enrollments.length;
@@ -481,15 +529,15 @@ export class UserModulesService {
    */
   private async validateUserExistsAndActive(userId: number): Promise<User> {
     const user = await this.userRepository.findOne({
-      where: { user_id: userId, deleted_on: IsNull() }
+      where: { user_id: userId, deleted_on: IsNull() },
     });
 
     if (!user) {
       // Check if user exists but is soft deleted
       const deletedUser = await this.userRepository.findOne({
-        where: { user_id: userId }
+        where: { user_id: userId },
       });
-      
+
       if (deletedUser && deletedUser.deleted_on) {
         throw new NotFoundException(`User with ID ${userId} has been deleted`);
       } else {
@@ -506,7 +554,7 @@ export class UserModulesService {
    */
   private async validateModuleExists(moduleId: number): Promise<Module> {
     const module = await this.moduleRepository.findOne({
-      where: { id: moduleId }
+      where: { id: moduleId },
     });
 
     if (!module) {
@@ -521,7 +569,10 @@ export class UserModulesService {
    * User must be assigned to at least one of the module's domains
    * @throws ForbiddenException if user doesn't have access
    */
-  private async validateUserHasModuleAccess(userId: number, moduleId: number): Promise<void> {
+  private async validateUserHasModuleAccess(
+    userId: number,
+    moduleId: number,
+  ): Promise<void> {
     const hasAccess = await this.userDomainRepository
       .createQueryBuilder('ud')
       .innerJoin('domain_modules', 'dm', 'dm.domain_id = ud.domain_id')
@@ -531,7 +582,7 @@ export class UserModulesService {
 
     if (!hasAccess) {
       throw new ForbiddenException(
-        `User does not have access to this module. User must be assigned to at least one of the module's domains first.`
+        `User does not have access to this module. User must be assigned to at least one of the module's domains first.`,
       );
     }
   }
@@ -545,7 +596,10 @@ export class UserModulesService {
    * Handles score, questions_answered, threshold_score, and status updates
    * Auto-updates status based on score vs threshold
    */
-  private applyEnrollmentUpdates(enrollment: UserModule, updateDto: UpdateUserModuleDto): void {
+  private applyEnrollmentUpdates(
+    enrollment: UserModule,
+    updateDto: UpdateUserModuleDto,
+  ): void {
     // Update basic fields
     if (updateDto.questions_answered !== undefined) {
       enrollment.questions_answered = updateDto.questions_answered;
@@ -562,10 +616,11 @@ export class UserModulesService {
     // Auto-update status based on score vs threshold
     if (updateDto.score !== undefined) {
       const finalScore = updateDto.score;
-      const threshold = updateDto.threshold_score !== undefined 
-        ? updateDto.threshold_score 
-        : enrollment.threshold_score;
-      
+      const threshold =
+        updateDto.threshold_score !== undefined
+          ? updateDto.threshold_score
+          : enrollment.threshold_score;
+
       if (finalScore >= threshold) {
         enrollment.status = 'passed';
         enrollment.completed_on = new Date();
@@ -576,9 +631,12 @@ export class UserModulesService {
     } else if (updateDto.status !== undefined) {
       // Allow manual status override
       enrollment.status = updateDto.status;
-      
+
       // Set completed_on timestamp if status is final
-      if (['completed', 'passed', 'failed'].includes(updateDto.status) && !enrollment.completed_on) {
+      if (
+        ['completed', 'passed', 'failed'].includes(updateDto.status) &&
+        !enrollment.completed_on
+      ) {
         enrollment.completed_on = new Date();
       }
     }
@@ -597,7 +655,7 @@ export class UserModulesService {
       module_id: enrollment.module_id,
       status: enrollment.status,
       threshold_score: enrollment.threshold_score,
-      joined_on: enrollment.joined_on
+      joined_on: enrollment.joined_on,
     };
   }
 
@@ -614,7 +672,7 @@ export class UserModulesService {
       status: enrollment.status,
       passed: enrollment.score >= enrollment.threshold_score,
       joined_on: enrollment.joined_on,
-      completed_on: enrollment.completed_on
+      completed_on: enrollment.completed_on,
     };
   }
 }

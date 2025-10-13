@@ -24,7 +24,11 @@ export class PaginatedResponseDto<T> {
     available?: Record<string, any>;
   };
 
-  constructor(data: T[], pagination: PaginationMetaDto, filters?: Record<string, any>) {
+  constructor(
+    data: T[],
+    pagination: PaginationMetaDto,
+    filters?: Record<string, any>,
+  ) {
     this.data = data;
     this.pagination = pagination;
     if (filters) {

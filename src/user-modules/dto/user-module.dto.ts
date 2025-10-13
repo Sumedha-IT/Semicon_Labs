@@ -1,4 +1,14 @@
-import { IsNumber, IsOptional, IsString, Min, Max, IsInt, IsNotEmpty, Allow, IsDefined } from 'class-validator';
+import {
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+  Max,
+  IsInt,
+  IsNotEmpty,
+  Allow,
+  IsDefined,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class EnrollModuleDto {

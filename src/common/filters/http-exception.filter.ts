@@ -23,14 +23,15 @@ export class HttpExceptionFilter implements ExceptionFilter {
     if (exception instanceof HttpException) {
       status = exception.getStatus();
       const exceptionResponse = exception.getResponse();
-      message = typeof exceptionResponse === 'string' 
-        ? exceptionResponse 
-        : exceptionResponse;
+      message =
+        typeof exceptionResponse === 'string'
+          ? exceptionResponse
+          : exceptionResponse;
     } else {
       // Handle non-HTTP exceptions (like database errors, validation errors, etc.)
       status = HttpStatus.INTERNAL_SERVER_ERROR;
       message = 'Internal server error';
-      
+
       // Log the actual error for debugging
       this.logger.error(
         `Unhandled exception: ${exception}`,
@@ -51,7 +52,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
       timestamp: new Date().toISOString(),
       path: request.url,
       method: request.method,
-      message: typeof message === 'string' ? message : (message as any)?.message || 'An error occurred',
+      message:
+        typeof message === 'string'
+          ? message
+          : (message as any)?.message || 'An error occurred',
       ...(typeof message === 'object' && message !== null ? message : {}),
     };
 

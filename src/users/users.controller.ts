@@ -1,4 +1,19 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Request, HttpStatus, HttpCode, BadRequestException, Query, Res } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  UseGuards,
+  Request,
+  HttpStatus,
+  HttpCode,
+  BadRequestException,
+  Query,
+  Res,
+} from '@nestjs/common';
 import { Response } from 'express';
 import { UsersService } from './users.service';
 import { UserDomainsService } from '../user-domains/user-domains.service';
@@ -31,7 +46,7 @@ export class UsersController {
       ...createUserDto,
       org_id: null as any,
       manager_id: null as any,
-      role: UserRole.LEARNER
+      role: UserRole.LEARNER,
     };
     const user = await this.usersService.create(individualUserData);
     return { user_id: user.user_id };
@@ -45,7 +60,7 @@ export class UsersController {
     // Set default role to LEARNER if not provided
     const userWithRole = {
       ...createUserDto,
-      role: createUserDto.role || UserRole.LEARNER
+      role: createUserDto.role || UserRole.LEARNER,
     };
     const user = await this.usersService.create(userWithRole);
     return { user_id: user.user_id };
@@ -65,16 +80,22 @@ export class UsersController {
   async findAll(
     @Query() queryDto: UserQueryDto,
     @Request() req,
-    @Res() res: Response
+    @Res() res: Response,
   ) {
-    console.log('Users v2 endpoint - req.user:', JSON.stringify(req.user, null, 2));
-    const result = await this.usersService.findUsersWithPagination(queryDto, req.user);
-    
+    console.log(
+      'Users v2 endpoint - req.user:',
+      JSON.stringify(req.user, null, 2),
+    );
+    const result = await this.usersService.findUsersWithPagination(
+      queryDto,
+      req.user,
+    );
+
     // Return 204 No Content if no results found
     if (result.pagination.total === 0) {
       return res.status(HttpStatus.NO_CONTENT).send();
     }
-    
+
     return res.status(HttpStatus.OK).json(result);
   }
 
@@ -99,12 +120,14 @@ export class UsersController {
   @Delete(':id/domains/:domainId')
   @Roles(UserRole.PLATFORM_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
-  async unlinkDomain(@Param('id') id: string, @Param('domainId') domainId: string) {
+  async unlinkDomain(
+    @Param('id') id: string,
+    @Param('domainId') domainId: string,
+  ) {
     const userId = parseInt(id, 10);
     const did = parseInt(domainId, 10);
     await this.userDomainsService.unlink(userId, did);
   }
-
 
   @Get(':id')
   @Roles(UserRole.PLATFORM_ADMIN)
@@ -113,7 +136,7 @@ export class UsersController {
     if (isNaN(userId)) {
       throw new BadRequestException('Invalid user ID');
     }
-    
+
     // Only PlatformAdmin can see any user across all organizations
     return this.usersService.findOne(userId);
   }
@@ -126,7 +149,7 @@ export class UsersController {
     if (isNaN(userId)) {
       throw new BadRequestException('Invalid user ID');
     }
-    
+
     // Only PlatformAdmin can update any user across all organizations
     await this.usersService.update(userId, updateUserDto);
     return { user_id: userId };
@@ -140,7 +163,7 @@ export class UsersController {
     if (isNaN(userId)) {
       throw new BadRequestException('Invalid user ID');
     }
-    
+
     // Only PlatformAdmin can delete any user across all organizations
     return this.usersService.remove(userId);
   }
@@ -183,10 +206,14 @@ export class UsersController {
     return this.usersService.getUserStatsByOrganization(req.user);
   }
 
-
   // User profile management
   @Get('profile/me')
-  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER, UserRole.LEARNER)
+  @Roles(
+    UserRole.PLATFORM_ADMIN,
+    UserRole.CLIENT_ADMIN,
+    UserRole.MANAGER,
+    UserRole.LEARNER,
+  )
   getMyProfile(@Request() req) {
     if (!req.user.userId || isNaN(req.user.userId)) {
       throw new BadRequestException('Invalid user ID');
@@ -195,7 +222,12 @@ export class UsersController {
   }
 
   @Patch('profile/me')
-  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER, UserRole.LEARNER)
+  @Roles(
+    UserRole.PLATFORM_ADMIN,
+    UserRole.CLIENT_ADMIN,
+    UserRole.MANAGER,
+    UserRole.LEARNER,
+  )
   @HttpCode(HttpStatus.OK)
   async updateMyProfile(@Body() updateUserDto: UpdateUserDto, @Request() req) {
     if (!req.user.userId || isNaN(req.user.userId)) {
@@ -207,22 +239,40 @@ export class UsersController {
 
   // Password management
   @Patch('change-password')
-  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER, UserRole.LEARNER)
+  @Roles(
+    UserRole.PLATFORM_ADMIN,
+    UserRole.CLIENT_ADMIN,
+    UserRole.MANAGER,
+    UserRole.LEARNER,
+  )
   @HttpCode(HttpStatus.OK)
-  changePassword(@Body() passwordData: { currentPassword: string; newPassword: string }, @Request() req) {
+  changePassword(
+    @Body() passwordData: { currentPassword: string; newPassword: string },
+    @Request() req,
+  ) {
     if (!req.user.userId || isNaN(req.user.userId)) {
       throw new BadRequestException('Invalid user ID');
     }
-    return this.usersService.changePassword(req.user.userId, passwordData.currentPassword, passwordData.newPassword);
+    return this.usersService.changePassword(
+      req.user.userId,
+      passwordData.currentPassword,
+      passwordData.newPassword,
+    );
   }
 
   @Post('reset-password')
   @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN)
   @HttpCode(HttpStatus.OK)
-  resetPassword(@Body() resetData: { userId: number; newPassword: string }, @Request() req) {
-    return this.usersService.resetPassword(resetData.userId, resetData.newPassword, req.user);
+  resetPassword(
+    @Body() resetData: { userId: number; newPassword: string },
+    @Request() req,
+  ) {
+    return this.usersService.resetPassword(
+      resetData.userId,
+      resetData.newPassword,
+      req.user,
+    );
   }
-
 
   // Get individual learners (Platform Admin only)
   @Get('individual-learners')

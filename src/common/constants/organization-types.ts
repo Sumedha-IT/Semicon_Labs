@@ -4,7 +4,7 @@ export enum OrganizationType {
   STARTUP = 'startup',
   UNIVERSITY = 'university',
   GOVERNMENT = 'government',
-  OTHER = 'other'
+  OTHER = 'other',
 }
 
 export enum Industry {
@@ -18,7 +18,7 @@ export enum Industry {
   AUTOMOTIVE = 'Automotive',
   ENERGY = 'Energy',
   AGRICULTURE = 'Agriculture',
-  OTHER = 'Other'
+  OTHER = 'Other',
 }
 
 export const ORGANIZATION_TYPE_DESCRIPTIONS = {
@@ -27,7 +27,7 @@ export const ORGANIZATION_TYPE_DESCRIPTIONS = {
   [OrganizationType.STARTUP]: 'Early-stage startup companies',
   [OrganizationType.UNIVERSITY]: 'Educational institutions and universities',
   [OrganizationType.GOVERNMENT]: 'Government agencies and departments',
-  [OrganizationType.OTHER]: 'Other types of organizations'
+  [OrganizationType.OTHER]: 'Other types of organizations',
 };
 
 export const INDUSTRY_DESCRIPTIONS = {
@@ -41,5 +41,5 @@ export const INDUSTRY_DESCRIPTIONS = {
   [Industry.AUTOMOTIVE]: 'Automotive Industry',
   [Industry.ENERGY]: 'Energy and Utilities',
   [Industry.AGRICULTURE]: 'Agriculture and Farming',
-  [Industry.OTHER]: 'Other Industries'
+  [Industry.OTHER]: 'Other Industries',
 };

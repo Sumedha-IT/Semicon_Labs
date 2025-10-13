@@ -9,7 +9,11 @@ import { UserDomainsModule } from '../user-domains/user-domains.module';
 import { UserModulesModule } from '../user-modules/user-modules.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([User, Organization]), UserDomainsModule, UserModulesModule],
+  imports: [
+    TypeOrmModule.forFeature([User, Organization]),
+    UserDomainsModule,
+    UserModulesModule,
+  ],
   controllers: [UsersController, UsersV1Controller],
   providers: [UsersService],
   exports: [UsersService],

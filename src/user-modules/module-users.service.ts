@@ -24,7 +24,7 @@ export class ModuleUsersService {
 
     // Check if module exists
     const module = await this.moduleRepository.findOne({
-      where: { id: moduleId }
+      where: { id: moduleId },
     });
 
     if (!module) {
@@ -41,12 +41,13 @@ export class ModuleUsersService {
     // Apply filters
     if (status) {
       if (status === 'passed') {
-        queryBuilder.andWhere('um.status = :status', { status: 'completed' })
-                    .andWhere('um.score >= :minScore', { minScore: 70 });
+        queryBuilder
+          .andWhere('um.status = :status', { status: 'completed' })
+          .andWhere('um.score >= :minScore', { minScore: 70 });
       } else if (status === 'failed') {
-        queryBuilder.andWhere('(um.status = :status OR um.score < :minScore)', { 
-          status: 'completed', 
-          minScore: 70 
+        queryBuilder.andWhere('(um.status = :status OR um.score < :minScore)', {
+          status: 'completed',
+          minScore: 70,
         });
       } else {
         queryBuilder.andWhere('um.status = :status', { status });
@@ -70,7 +71,7 @@ export class ModuleUsersService {
       'um.score AS score',
       'um.status AS status',
       'um.joined_on AS joined_on',
-      'um.completed_on AS completed_on'
+      'um.completed_on AS completed_on',
     ]);
 
     // Pagination
@@ -81,7 +82,7 @@ export class ModuleUsersService {
 
     const [results, total] = await Promise.all([
       queryBuilder.getRawMany(),
-      queryBuilder.getCount()
+      queryBuilder.getCount(),
     ]);
 
     return {
@@ -104,7 +105,7 @@ export class ModuleUsersService {
   async getModuleStats(moduleId: number) {
     // Check if module exists
     const module = await this.moduleRepository.findOne({
-      where: { id: moduleId }
+      where: { id: moduleId },
     });
 
     if (!module) {
@@ -118,13 +119,13 @@ export class ModuleUsersService {
       .andWhere('u.deleted_on IS NULL')
       .select([
         'COUNT(*) as total_enrolled',
-        'COUNT(CASE WHEN um.status = \'completed\' AND um.score >= 70 THEN 1 END) as passed',
-        'COUNT(CASE WHEN um.status = \'completed\' AND um.score < 70 THEN 1 END) as failed',
-        'COUNT(CASE WHEN um.status = \'in_progress\' THEN 1 END) as in_progress',
-        'COUNT(CASE WHEN um.status = \'not_started\' THEN 1 END) as not_started',
+        "COUNT(CASE WHEN um.status = 'completed' AND um.score >= 70 THEN 1 END) as passed",
+        "COUNT(CASE WHEN um.status = 'completed' AND um.score < 70 THEN 1 END) as failed",
+        "COUNT(CASE WHEN um.status = 'in_progress' THEN 1 END) as in_progress",
+        "COUNT(CASE WHEN um.status = 'not_started' THEN 1 END) as not_started",
         'AVG(um.score) as average_score',
         'MAX(um.score) as highest_score',
-        'MIN(um.score) as lowest_score'
+        'MIN(um.score) as lowest_score',
       ])
       .getRawOne();
 
@@ -136,15 +137,23 @@ export class ModuleUsersService {
       failed: parseInt(stats.failed),
       in_progress: parseInt(stats.in_progress),
       not_started: parseInt(stats.not_started),
-      pass_rate: stats.total_enrolled > 0 ? (parseInt(stats.passed) / parseInt(stats.total_enrolled) * 100).toFixed(2) : 0,
+      pass_rate:
+        stats.total_enrolled > 0
+          ? (
+              (parseInt(stats.passed) / parseInt(stats.total_enrolled)) *
+              100
+            ).toFixed(2)
+          : 0,
       average_score: parseFloat(stats.average_score || 0).toFixed(2),
       highest_score: parseFloat(stats.highest_score || 0),
-      lowest_score: parseFloat(stats.lowest_score || 0)
+      lowest_score: parseFloat(stats.lowest_score || 0),
     };
   }
 
   async enrollUserInModule(moduleId: number, enrollDto: EnrollUserDto) {
-    return this.userModulesService.enroll(enrollDto.user_id, { module_id: moduleId });
+    return this.userModulesService.enroll(enrollDto.user_id, {
+      module_id: moduleId,
+    });
   }
 
   async unenrollUser(userId: number, moduleId: number) {

@@ -20,7 +20,10 @@ import { ModuleUsersService } from '../user-modules/module-users.service';
 import { CreateModuleDto } from './dto/create-module.dto';
 import { UpdateModuleDto } from './dto/update-module.dto';
 import { ModuleQueryDto } from './dto/module-query.dto';
-import { EnrollUserDto, ModuleUserQueryDto } from '../user-modules/dto/user-module.dto';
+import {
+  EnrollUserDto,
+  ModuleUserQueryDto,
+} from '../user-modules/dto/user-module.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorator/roles.decorator';
@@ -42,15 +45,15 @@ export class ModulesController {
   }
 
   @Get()
-  @Roles('PlatformAdmin', 'ClientAdmin', 'Manager', 'Learner') 
+  @Roles('PlatformAdmin', 'ClientAdmin', 'Manager', 'Learner')
   async findAll(@Query() query: ModuleQueryDto, @Res() res: Response) {
     const result = await this.modulesService.findAll(query);
-    
+
     // Return 204 No Content if no results found
     if (result.total === 0) {
       return res.status(HttpStatus.NO_CONTENT).send();
     }
-    
+
     return res.status(HttpStatus.OK).json(result);
   }
 
@@ -62,7 +65,10 @@ export class ModulesController {
 
   @Patch(':id')
   @Roles('PlatformAdmin')
-  async update(@Param('id', ParseIntPipe) id: number, @Body() updateModuleDto: UpdateModuleDto) {
+  async update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() updateModuleDto: UpdateModuleDto,
+  ) {
     return await this.modulesService.update(id, updateModuleDto);
   }
 
@@ -79,7 +85,7 @@ export class ModulesController {
   @HttpCode(HttpStatus.CREATED)
   async enrollUserInModule(
     @Param('id') id: string,
-    @Body() enrollDto: EnrollUserDto
+    @Body() enrollDto: EnrollUserDto,
   ) {
     const moduleId = parseInt(id, 10);
     if (isNaN(moduleId)) {
@@ -93,19 +99,22 @@ export class ModulesController {
   async getModuleUsers(
     @Param('id') id: string,
     @Query() queryDto: ModuleUserQueryDto,
-    @Res() res: Response
+    @Res() res: Response,
   ) {
     const moduleId = parseInt(id, 10);
     if (isNaN(moduleId)) {
       throw new BadRequestException('Invalid module ID');
     }
-    const result = await this.moduleUsersService.getModuleUsers(moduleId, queryDto);
-    
+    const result = await this.moduleUsersService.getModuleUsers(
+      moduleId,
+      queryDto,
+    );
+
     // Return 204 No Content if no results found
     if (result.total === 0) {
       return res.status(HttpStatus.NO_CONTENT).send();
     }
-    
+
     return res.status(HttpStatus.OK).json(result);
   }
 
@@ -117,12 +126,12 @@ export class ModulesController {
       throw new BadRequestException('Invalid module ID');
     }
     const result = await this.moduleUsersService.getPassedUsers(moduleId);
-    
+
     // Return 204 No Content if no results found
     if (result.total === 0) {
       return res.status(HttpStatus.NO_CONTENT).send();
     }
-    
+
     return res.status(HttpStatus.OK).json(result);
   }
 
@@ -134,12 +143,12 @@ export class ModulesController {
       throw new BadRequestException('Invalid module ID');
     }
     const result = await this.moduleUsersService.getFailedUsers(moduleId);
-    
+
     // Return 204 No Content if no results found
     if (result.total === 0) {
       return res.status(HttpStatus.NO_CONTENT).send();
     }
-    
+
     return res.status(HttpStatus.OK).json(result);
   }
 
@@ -158,14 +167,14 @@ export class ModulesController {
   @HttpCode(HttpStatus.OK)
   async unenrollUserFromModule(
     @Param('id') id: string,
-    @Param('userId') userId: string
+    @Param('userId') userId: string,
   ) {
     const moduleId = parseInt(id, 10);
     const uid = parseInt(userId, 10);
     if (isNaN(moduleId) || isNaN(uid)) {
       throw new BadRequestException('Invalid module ID or user ID');
     }
-    
+
     // Import and inject UserModulesService to call unenrollByUserAndModule
     // For now, this is a placeholder that needs the service
     return this.moduleUsersService.unenrollUser(uid, moduleId);
@@ -175,7 +184,10 @@ export class ModulesController {
   @Post(':id/domains')
   @Roles(UserRole.PLATFORM_ADMIN)
   @HttpCode(HttpStatus.OK)
-  async linkDomains(@Param('id', ParseIntPipe) id: number, @Body() body: { domainIds: number[] }) {
+  async linkDomains(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { domainIds: number[] },
+  ) {
     return this.modulesService.linkDomains(id, body.domainIds);
   }
 
@@ -188,7 +200,10 @@ export class ModulesController {
   @Delete(':id/domains/:domainId')
   @Roles(UserRole.PLATFORM_ADMIN)
   @HttpCode(HttpStatus.OK)
-  async unlinkDomain(@Param('id', ParseIntPipe) id: number, @Param('domainId', ParseIntPipe) domainId: number) {
+  async unlinkDomain(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('domainId', ParseIntPipe) domainId: number,
+  ) {
     return this.modulesService.unlinkDomain(id, domainId);
   }
 }

@@ -1,4 +1,14 @@
-import { IsOptional, IsString, IsNumber, IsEnum, IsBoolean, IsDateString, Min, Max, IsIn } from 'class-validator';
+import {
+  IsOptional,
+  IsString,
+  IsNumber,
+  IsEnum,
+  IsBoolean,
+  IsDateString,
+  Min,
+  Max,
+  IsIn,
+} from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { UserRole } from '../../common/constants/user-roles';
 
@@ -40,7 +50,10 @@ export class UserQueryDto {
 
   // Sorting
   @IsOptional()
-  @IsEnum(SortBy, { message: 'SortBy must be one of: name, email, role, joined_on, updated_on, location, user_phone' })
+  @IsEnum(SortBy, {
+    message:
+      'SortBy must be one of: name, email, role, joined_on, updated_on, location, user_phone',
+  })
   sortBy?: SortBy = SortBy.EMAIL;
 
   @IsOptional()
@@ -49,7 +62,10 @@ export class UserQueryDto {
 
   // Basic Filters
   @IsOptional()
-  @IsEnum(UserRole, { message: 'Role must be one of: PlatformAdmin, ClientAdmin, Manager, Learner' })
+  @IsEnum(UserRole, {
+    message:
+      'Role must be one of: PlatformAdmin, ClientAdmin, Manager, Learner',
+  })
   role?: UserRole;
 
   @IsOptional()
@@ -100,23 +116,33 @@ export class UserQueryDto {
   @IsNumber({}, { message: 'Tool ID must be a number' })
   toolId?: number;
 
-  
-
   // Date Range Filters
   @IsOptional()
-  @IsDateString({}, { message: 'Joined after must be a valid date in YYYY-MM-DD format' })
+  @IsDateString(
+    {},
+    { message: 'Joined after must be a valid date in YYYY-MM-DD format' },
+  )
   joinedAfter?: string;
 
   @IsOptional()
-  @IsDateString({}, { message: 'Joined before must be a valid date in YYYY-MM-DD format' })
+  @IsDateString(
+    {},
+    { message: 'Joined before must be a valid date in YYYY-MM-DD format' },
+  )
   joinedBefore?: string;
 
   @IsOptional()
-  @IsDateString({}, { message: 'Updated after must be a valid date in YYYY-MM-DD format' })
+  @IsDateString(
+    {},
+    { message: 'Updated after must be a valid date in YYYY-MM-DD format' },
+  )
   updatedAfter?: string;
 
   @IsOptional()
-  @IsDateString({}, { message: 'Updated before must be a valid date in YYYY-MM-DD format' })
+  @IsDateString(
+    {},
+    { message: 'Updated before must be a valid date in YYYY-MM-DD format' },
+  )
   updatedBefore?: string;
 
   // Search

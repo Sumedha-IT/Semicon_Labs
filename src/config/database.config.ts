@@ -10,7 +10,7 @@ export const typeOrmConfig = (cs: ConfigService): TypeOrmModuleOptions => ({
   database: cs.get<string>('DB_NAME', 'semiconlabs'),
   entities: [__dirname + '/../**/*.entity{.ts,.js}'],
   synchronize: true, // Only for development
-  logging: true,     // Only for development
+  logging: true, // Only for development
   retryAttempts: 3,
   retryDelay: 3000,
   autoLoadEntities: true,

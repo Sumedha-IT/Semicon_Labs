@@ -1,4 +1,17 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, HttpCode, HttpStatus, UseGuards, Res } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  Query,
+  HttpCode,
+  HttpStatus,
+  UseGuards,
+  Res,
+} from '@nestjs/common';
 import { Response } from 'express';
 import { DomainsService } from './domains.service';
 import { CreateDomainDto } from './dto/create-domain.dto';
@@ -24,12 +37,12 @@ export class DomainsController {
   @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER)
   async findAll(@Res() res: Response, @Query('search') search?: string) {
     const domains = await this.domainsService.findAll(search);
-    
+
     // Return 204 No Content if no results found
     if (domains.length === 0) {
       return res.status(HttpStatus.NO_CONTENT).send();
     }
-    
+
     return res.status(HttpStatus.OK).json(domains);
   }
 
@@ -52,5 +65,3 @@ export class DomainsController {
     await this.domainsService.remove(+id);
   }
 }
-
-

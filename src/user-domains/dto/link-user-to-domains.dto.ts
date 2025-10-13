@@ -6,8 +6,9 @@ export class LinkUserToDomainsDto {
   @ArrayNotEmpty()
   @IsInt({ each: true })
   @Min(1, { each: true })
-  @IsUniqueArray({ message: 'domainIds must contain only unique values (duplicate domain IDs found)' })
+  @IsUniqueArray({
+    message:
+      'domainIds must contain only unique values (duplicate domain IDs found)',
+  })
   domainIds: number[];
 }
-
-

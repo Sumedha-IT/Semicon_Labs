@@ -1,4 +1,9 @@
-import { Injectable, ConflictException, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  ConflictException,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, IsNull, SelectQueryBuilder } from 'typeorm';
 import { Organization } from './entities/organization.entity';
@@ -6,7 +11,10 @@ import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { User } from '../users/entities/user.entity';
 import { OrganizationQueryDto } from './dto/organization-query.dto';
-import { PaginatedResponseDto, PaginationMetaDto } from '../users/dto/paginated-response.dto';
+import {
+  PaginatedResponseDto,
+  PaginationMetaDto,
+} from '../users/dto/paginated-response.dto';
 
 @Injectable()
 export class OrganizationsService {
@@ -29,21 +37,31 @@ export class OrganizationsService {
    * Creates a new organization
    * Validates uniqueness of name, POC email, and POC phone
    */
-  async create(createOrganizationDto: CreateOrganizationDto): Promise<Organization> {
+  async create(
+    createOrganizationDto: CreateOrganizationDto,
+  ): Promise<Organization> {
     // Validate organization name uniqueness
     await this.validateUniqueField('name', createOrganizationDto.name);
-    
+
     // Validate POC email uniqueness if provided
     if (createOrganizationDto.poc_email) {
-      await this.validateUniqueField('poc_email', createOrganizationDto.poc_email);
+      await this.validateUniqueField(
+        'poc_email',
+        createOrganizationDto.poc_email,
+      );
     }
-    
+
     // Validate POC phone uniqueness if provided
     if (createOrganizationDto.poc_phone) {
-      await this.validateUniqueField('poc_phone', createOrganizationDto.poc_phone);
+      await this.validateUniqueField(
+        'poc_phone',
+        createOrganizationDto.poc_phone,
+      );
     }
-    
-    const organization = this.organizationsRepository.create(createOrganizationDto);
+
+    const organization = this.organizationsRepository.create(
+      createOrganizationDto,
+    );
     return this.organizationsRepository.save(organization);
   }
 
@@ -69,7 +87,10 @@ export class OrganizationsService {
    * Updates an organization's information
    * Validates uniqueness constraints for updated fields
    */
-  async update(id: number, updateOrganizationDto: UpdateOrganizationDto): Promise<Organization | null> {
+  async update(
+    id: number,
+    updateOrganizationDto: UpdateOrganizationDto,
+  ): Promise<Organization | null> {
     // Check if organization exists
     const existingOrg = await this.findOne(id);
     if (!existingOrg) {
@@ -78,7 +99,7 @@ export class OrganizationsService {
 
     // Validate uniqueness constraints for updated fields
     await this.validateOrganizationUpdate(id, updateOrganizationDto);
-    
+
     await this.organizationsRepository.update(id, updateOrganizationDto);
     return this.findOne(id);
   }
@@ -100,23 +121,23 @@ export class OrganizationsService {
 
     // Check if organization has active users
     const userCount = await this.getUserCount(id);
-    
+
     if (userCount > 0) {
       // Get detailed user breakdown for better error message
       const userCountByRole = await this.getUserCountByRole(id);
       const userBreakdown = Object.entries(userCountByRole)
         .map(([role, count]) => `${count} ${role}(s)`)
         .join(', ');
-      
+
       return this.createErrorResponse(
-        `Cannot delete organization. It has ${userCount} active user(s): ${userBreakdown}.`
+        `Cannot delete organization. It has ${userCount} active user(s): ${userBreakdown}.`,
       );
     }
 
     // Perform soft delete
-    await this.organizationsRepository.update(id, { 
+    await this.organizationsRepository.update(id, {
       deleted_on: new Date(),
-      updated_on: new Date()
+      updated_on: new Date(),
     });
 
     return this.createSuccessResponse('Organization soft deleted successfully');
@@ -133,7 +154,7 @@ export class OrganizationsService {
    */
   async findOrganizationsWithPagination(
     queryDto: OrganizationQueryDto,
-    requestingUser: any
+    requestingUser: any,
   ): Promise<PaginatedResponseDto<Organization>> {
     const qb = this.organizationsRepository
       .createQueryBuilder('org')
@@ -141,13 +162,16 @@ export class OrganizationsService {
       .where('org.deleted_on IS NULL');
 
     // ClientAdmin can only see their org
-    if (requestingUser?.role === 'ClientAdmin' && requestingUser?.orgId != null) {
+    if (
+      requestingUser?.role === 'ClientAdmin' &&
+      requestingUser?.orgId != null
+    ) {
       qb.andWhere('org.org_id = :orgId', { orgId: requestingUser.orgId });
     }
 
     // Apply filters
     this.applyFilters(qb, queryDto);
-    
+
     // Apply sorting
     this.applySorting(qb, queryDto);
 
@@ -174,10 +198,10 @@ export class OrganizationsService {
    */
   async getUserCount(orgId: number): Promise<number> {
     const count = await this.usersRepository.count({
-      where: { 
-        org_id: orgId, 
-        deleted_on: IsNull() 
-      }
+      where: {
+        org_id: orgId,
+        deleted_on: IsNull(),
+      },
     });
     return count;
   }
@@ -194,7 +218,7 @@ export class OrganizationsService {
       .andWhere('user.deleted_on IS NULL')
       .groupBy('user.role')
       .getRawMany();
-    
+
     return result.reduce((acc, row) => {
       acc[row.role] = parseInt(row.count);
       return acc;
@@ -221,12 +245,12 @@ export class OrganizationsService {
         type: organization.type,
         industry: organization.industry,
         location: organization.location,
-        created_on: organization.created_on
+        created_on: organization.created_on,
       },
       statistics: {
         total_users: userCount,
-        users_by_role: userCountByRole
-      }
+        users_by_role: userCountByRole,
+      },
     };
   }
 
@@ -246,9 +270,11 @@ export class OrganizationsService {
    * Validates whether an organization can accept new users
    * Checks if organization exists and is not deleted
    */
-  async validateOrganizationCanAcceptUsers(id: number): Promise<{ canAccept: boolean; reason?: string }> {
+  async validateOrganizationCanAcceptUsers(
+    id: number,
+  ): Promise<{ canAccept: boolean; reason?: string }> {
     const organization = await this.findOne(id);
-    
+
     if (!organization) {
       return { canAccept: false, reason: 'Organization not found' };
     }
@@ -272,20 +298,26 @@ export class OrganizationsService {
   /**
    * Creates a standardized error response
    */
-  private createErrorResponse(message: string): { success: boolean; message: string } {
+  private createErrorResponse(message: string): {
+    success: boolean;
+    message: string;
+  } {
     return {
       success: false,
-      message
+      message,
     };
   }
 
   /**
    * Creates a standardized success response
    */
-  private createSuccessResponse(message: string): { success: boolean; message: string } {
+  private createSuccessResponse(message: string): {
+    success: boolean;
+    message: string;
+  } {
     return {
       success: true,
-      message
+      message,
     };
   }
 
@@ -303,7 +335,7 @@ export class OrganizationsService {
   private async validateUniqueField(
     field: 'name' | 'poc_email' | 'poc_phone',
     value: string,
-    excludeId?: number
+    excludeId?: number,
   ): Promise<void> {
     // Normalize the value based on field type
     let normalizedValue = value.trim();
@@ -312,18 +344,20 @@ export class OrganizationsService {
     }
 
     const existingOrg = await this.organizationsRepository.findOne({
-      where: { [field]: normalizedValue, deleted_on: IsNull() }
+      where: { [field]: normalizedValue, deleted_on: IsNull() },
     });
-    
+
     // If found and it's not the organization being updated
     if (existingOrg && (!excludeId || existingOrg.org_id !== excludeId)) {
       const fieldName = {
         name: 'name',
         poc_email: 'POC email',
-        poc_phone: 'POC phone'
+        poc_phone: 'POC phone',
       }[field];
-      
-      throw new ConflictException(`Organization with this ${fieldName} already exists`);
+
+      throw new ConflictException(
+        `Organization with this ${fieldName} already exists`,
+      );
     }
   }
 
@@ -331,7 +365,10 @@ export class OrganizationsService {
    * Validates uniqueness constraints when updating an organization
    * Checks name, POC email, and POC phone if they are being updated
    */
-  private async validateOrganizationUpdate(id: number, updateDto: UpdateOrganizationDto): Promise<void> {
+  private async validateOrganizationUpdate(
+    id: number,
+    updateDto: UpdateOrganizationDto,
+  ): Promise<void> {
     // Check if name is being updated and validate uniqueness
     if (updateDto.name) {
       await this.validateUniqueField('name', updateDto.name, id);
@@ -355,7 +392,10 @@ export class OrganizationsService {
   /**
    * Applies filters to a query builder based on query DTO
    */
-  private applyFilters(qb: SelectQueryBuilder<Organization>, queryDto: OrganizationQueryDto): void {
+  private applyFilters(
+    qb: SelectQueryBuilder<Organization>,
+    queryDto: OrganizationQueryDto,
+  ): void {
     // Type filter
     if (queryDto.type) {
       qb.andWhere('org.type = :type', { type: queryDto.type });
@@ -368,20 +408,24 @@ export class OrganizationsService {
 
     // Location filter
     if (queryDto.location) {
-      qb.andWhere('org.location LIKE :location', { location: `%${queryDto.location}%` });
+      qb.andWhere('org.location LIKE :location', {
+        location: `%${queryDto.location}%`,
+      });
     }
 
     // Subscription ID filter
     if (queryDto.subscriptionId != null) {
-      qb.andWhere('org.subscription_id = :subscriptionId', { subscriptionId: queryDto.subscriptionId });
+      qb.andWhere('org.subscription_id = :subscriptionId', {
+        subscriptionId: queryDto.subscriptionId,
+      });
     }
 
     // Created date range filters
     if (queryDto.createdAfter || queryDto.createdBefore) {
       if (queryDto.createdAfter && queryDto.createdBefore) {
-        qb.andWhere('org.created_on BETWEEN :ca AND :cb', { 
-          ca: queryDto.createdAfter, 
-          cb: queryDto.createdBefore 
+        qb.andWhere('org.created_on BETWEEN :ca AND :cb', {
+          ca: queryDto.createdAfter,
+          cb: queryDto.createdBefore,
         });
       } else if (queryDto.createdAfter) {
         qb.andWhere('org.created_on >= :ca', { ca: queryDto.createdAfter });
@@ -393,9 +437,9 @@ export class OrganizationsService {
     // Updated date range filters
     if (queryDto.updatedAfter || queryDto.updatedBefore) {
       if (queryDto.updatedAfter && queryDto.updatedBefore) {
-        qb.andWhere('org.updated_on BETWEEN :ua AND :ub', { 
-          ua: queryDto.updatedAfter, 
-          ub: queryDto.updatedBefore 
+        qb.andWhere('org.updated_on BETWEEN :ua AND :ub', {
+          ua: queryDto.updatedAfter,
+          ub: queryDto.updatedBefore,
         });
       } else if (queryDto.updatedAfter) {
         qb.andWhere('org.updated_on >= :ua', { ua: queryDto.updatedAfter });
@@ -408,7 +452,7 @@ export class OrganizationsService {
     if (queryDto.search) {
       qb.andWhere(
         '(org.name ILIKE :q OR org.poc_name ILIKE :q OR org.poc_email ILIKE :q)',
-        { q: `%${queryDto.search}%` }
+        { q: `%${queryDto.search}%` },
       );
     }
   }
@@ -416,10 +460,15 @@ export class OrganizationsService {
   /**
    * Applies sorting to a query builder
    */
-  private applySorting(qb: SelectQueryBuilder<Organization>, queryDto: OrganizationQueryDto): void {
+  private applySorting(
+    qb: SelectQueryBuilder<Organization>,
+    queryDto: OrganizationQueryDto,
+  ): void {
     const sortBy = queryDto.sortBy || 'name';
-    const sortOrder = (queryDto.sortOrder || 'asc').toUpperCase() as 'ASC' | 'DESC';
-    
+    const sortOrder = (queryDto.sortOrder || 'asc').toUpperCase() as
+      | 'ASC'
+      | 'DESC';
+
     const columnMap: Record<string, string> = {
       name: 'org.name',
       created_on: 'org.created_on',
@@ -427,26 +476,33 @@ export class OrganizationsService {
       location: 'org.location',
       type: 'org.type',
     };
-    
+
     qb.orderBy(columnMap[sortBy] || 'org.name', sortOrder);
   }
 
   /**
    * Creates an object containing all applied filters from query DTO
    */
-  private createAppliedFiltersObject(queryDto: OrganizationQueryDto): Record<string, any> {
+  private createAppliedFiltersObject(
+    queryDto: OrganizationQueryDto,
+  ): Record<string, any> {
     const appliedFilters: Record<string, any> = {};
-    
+
     if (queryDto.type) appliedFilters.type = queryDto.type;
     if (queryDto.industry) appliedFilters.industry = queryDto.industry;
     if (queryDto.location) appliedFilters.location = queryDto.location;
-    if (queryDto.subscriptionId != null) appliedFilters.subscriptionId = queryDto.subscriptionId;
-    if (queryDto.createdAfter) appliedFilters.createdAfter = queryDto.createdAfter;
-    if (queryDto.createdBefore) appliedFilters.createdBefore = queryDto.createdBefore;
-    if (queryDto.updatedAfter) appliedFilters.updatedAfter = queryDto.updatedAfter;
-    if (queryDto.updatedBefore) appliedFilters.updatedBefore = queryDto.updatedBefore;
+    if (queryDto.subscriptionId != null)
+      appliedFilters.subscriptionId = queryDto.subscriptionId;
+    if (queryDto.createdAfter)
+      appliedFilters.createdAfter = queryDto.createdAfter;
+    if (queryDto.createdBefore)
+      appliedFilters.createdBefore = queryDto.createdBefore;
+    if (queryDto.updatedAfter)
+      appliedFilters.updatedAfter = queryDto.updatedAfter;
+    if (queryDto.updatedBefore)
+      appliedFilters.updatedBefore = queryDto.updatedBefore;
     if (queryDto.search) appliedFilters.search = queryDto.search;
-    
+
     return appliedFilters;
   }
 }

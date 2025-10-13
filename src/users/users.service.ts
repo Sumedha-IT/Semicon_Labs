@@ -1,13 +1,32 @@
-import { Injectable, ConflictException, BadRequestException, UnprocessableEntityException, NotFoundException, Inject, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  ConflictException,
+  BadRequestException,
+  UnprocessableEntityException,
+  NotFoundException,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, IsNull, MoreThan, Like, Or, Between, SelectQueryBuilder } from 'typeorm';
+import {
+  Repository,
+  IsNull,
+  MoreThan,
+  Like,
+  Or,
+  Between,
+  SelectQueryBuilder,
+} from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User } from './entities/user.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { CreateIndividualUserDto } from './dto/create-individual-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UserQueryDto, SortBy, SortOrder } from './dto/user-query.dto';
-import { PaginatedResponseDto, PaginationMetaDto } from './dto/paginated-response.dto';
+import {
+  PaginatedResponseDto,
+  PaginationMetaDto,
+} from './dto/paginated-response.dto';
 import { UserDomainsService } from '../user-domains/user-domains.service';
 import { UserModulesService } from '../user-modules/user-modules.service';
 import { UserRole } from '../common/constants/user-roles';
@@ -37,45 +56,55 @@ export class UsersService {
    * Creates a new user (organization user or individual learner)
    * Validates email uniqueness, role restrictions, and organization requirements
    */
-  async create(createUserDto: CreateUserDto | CreateIndividualUserDto): Promise<User> {
+  async create(
+    createUserDto: CreateUserDto | CreateIndividualUserDto,
+  ): Promise<User> {
     try {
       // Check if user with this email already exists (including soft-deleted users)
       const existingUser = await this.usersRepository.findOne({
-        where: { email: createUserDto.email }
+        where: { email: createUserDto.email },
       });
       if (existingUser) {
         if (existingUser.deleted_on) {
-          throw new ConflictException(`User with email ${createUserDto.email} was previously deleted and cannot be recreated. Please use a different email address.`);
+          throw new ConflictException(
+            `User with email ${createUserDto.email} was previously deleted and cannot be recreated. Please use a different email address.`,
+          );
         } else {
-          throw new ConflictException(`User with email ${createUserDto.email} already exists`);
+          throw new ConflictException(
+            `User with email ${createUserDto.email} already exists`,
+          );
         }
       }
 
       // Only validate manager/ClientAdmin/PlatformAdmin creation rules if role is present (CreateUserDto)
       if ('role' in createUserDto) {
         // Validate Platform Admin creation rules (only one Platform Admin allowed)
-        await this.validatePlatformAdminCreation(createUserDto as CreateUserDto);
-        
+        await this.validatePlatformAdminCreation(
+          createUserDto as CreateUserDto,
+        );
+
         // Validate manager creation rules
         await this.validateManagerCreation(createUserDto as CreateUserDto);
-        
+
         // Validate ClientAdmin creation rules
         await this.validateClientAdminCreation(createUserDto as CreateUserDto);
       }
-      
-    // Hash the password before saving
+
+      // Hash the password before saving
       const hashedPassword = await this.hashPassword(createUserDto.password);
-    
+
       // Remove password field and add password_hash
       const { password, ...userDataWithoutPassword } = createUserDto;
       const userData = {
         ...userDataWithoutPassword,
         password_hash: hashedPassword,
         // Convert dob string to Date if present
-        dob: userDataWithoutPassword.dob ? new Date(userDataWithoutPassword.dob) : undefined,
+        dob: userDataWithoutPassword.dob
+          ? new Date(userDataWithoutPassword.dob)
+          : undefined,
       };
-    
-    const user = this.usersRepository.create(userData);
+
+      const user = this.usersRepository.create(userData);
       return await this.usersRepository.save(user);
     } catch (error) {
       // Log the error for debugging
@@ -100,10 +129,10 @@ export class UsersService {
     const users = await this.usersRepository.find({
       where: { deleted_on: IsNull() },
       select: {
-        user_id: true
-      }
+        user_id: true,
+      },
     });
-    return users.map(user => ({ user_id: user.user_id }));
+    return users.map((user) => ({ user_id: user.user_id }));
   }
 
   /**
@@ -136,7 +165,7 @@ export class UsersService {
 
     // Prepare update data (hash password if provided)
     const updateData = await this.prepareUpdateData(updateUserDto);
-    
+
     await this.usersRepository.update(id, updateData);
     return this.findOne(id);
   }
@@ -181,7 +210,10 @@ export class UsersService {
 
       // Reassign any remaining team members to ClientAdmin
       teamMembersCount = await this.reassignManagerTeamMembers(id, user.org_id);
-      reassignmentMessage = teamMembersCount > 0 ? ` ${teamMembersCount} team members reassigned to ClientAdmin.` : '';
+      reassignmentMessage =
+        teamMembersCount > 0
+          ? ` ${teamMembersCount} team members reassigned to ClientAdmin.`
+          : '';
     }
 
     // If deleting a ClientAdmin, check if they have active managers or learners
@@ -197,12 +229,18 @@ export class UsersService {
     await this.cleanupUserDomains(id);
     await this.cleanupUserModules(id);
 
-    // Soft delete the user using raw query
-    await this.usersRepository.query(
-      `UPDATE users SET deleted_on = NOW(), updated_on = NOW() WHERE user_id = ${id}`
+    // Soft delete the user using ORM
+    await this.usersRepository.update(
+      { user_id: id },
+      {
+        deleted_on: new Date(),
+        updated_on: new Date(),
+      },
     );
-    
-    return this.createSuccessResponse(`User soft deleted successfully.${reassignmentMessage}`);
+
+    return this.createSuccessResponse(
+      `User soft deleted successfully.${reassignmentMessage}`,
+    );
   }
 
   /**
@@ -219,7 +257,9 @@ export class UsersService {
     const userActive = await this.findOne(id);
 
     // Check user domains
-    const userDomains = await this.userDomainsService.listUserDomains(id).catch(() => []);
+    const userDomains = await this.userDomainsService
+      .listUserDomains(id)
+      .catch(() => []);
 
     return {
       userId: id,
@@ -229,13 +269,15 @@ export class UsersService {
       deletedOn: userAnyStatus?.deleted_on || null,
       userDomainsCount: userDomains.length,
       userDomains: userDomains,
-      userData: userAnyStatus ? {
-        name: userAnyStatus.name,
-        email: userAnyStatus.email,
-        role: userAnyStatus.role,
-        org_id: userAnyStatus.org_id,
-        deleted_on: userAnyStatus.deleted_on
-      } : null
+      userData: userAnyStatus
+        ? {
+            name: userAnyStatus.name,
+            email: userAnyStatus.email,
+            role: userAnyStatus.role,
+            org_id: userAnyStatus.org_id,
+            deleted_on: userAnyStatus.deleted_on,
+          }
+        : null,
     };
   }
 
@@ -266,7 +308,11 @@ export class UsersService {
   /**
    * Updates a user within an organization context
    */
-  async updateInOrganization(id: number, orgId: number, updateUserDto: UpdateUserDto): Promise<User | null> {
+  async updateInOrganization(
+    id: number,
+    orgId: number,
+    updateUserDto: UpdateUserDto,
+  ): Promise<User | null> {
     const user = await this.findOneInOrganization(id, orgId);
     if (!user) {
       return null;
@@ -282,7 +328,7 @@ export class UsersService {
 
     // Prepare update data (hash password if provided)
     const updateData = await this.prepareUpdateData(updateUserDto);
-    
+
     await this.usersRepository.update(id, updateData);
     return this.findOneInOrganization(id, orgId);
   }
@@ -291,7 +337,10 @@ export class UsersService {
    * Soft deletes a user from an organization
    * Similar to remove() but scoped to organization
    */
-  async removeFromOrganization(id: number, orgId: number): Promise<{ success: boolean; message: string }> {
+  async removeFromOrganization(
+    id: number,
+    orgId: number,
+  ): Promise<{ success: boolean; message: string }> {
     const user = await this.findOneInOrganization(id, orgId);
     if (!user) {
       return this.createErrorResponse('User not found in organization');
@@ -311,13 +360,19 @@ export class UsersService {
         await this.validateManagerDeletion(id, orgId);
       } catch (error) {
         // Change error message for organization context
-        const message = error.message.replace('Cannot delete manager', 'Cannot remove manager from organization');
+        const message = error.message.replace(
+          'Cannot delete manager',
+          'Cannot remove manager from organization',
+        );
         return this.createErrorResponse(message);
       }
 
       // Reassign any remaining team members to ClientAdmin
       teamMembersCount = await this.reassignManagerTeamMembers(id, orgId);
-      reassignmentMessage = teamMembersCount > 0 ? ` ${teamMembersCount} team members reassigned to ClientAdmin.` : '';
+      reassignmentMessage =
+        teamMembersCount > 0
+          ? ` ${teamMembersCount} team members reassigned to ClientAdmin.`
+          : '';
     }
 
     // If removing a ClientAdmin from organization, check if they have active managers or learners
@@ -326,7 +381,10 @@ export class UsersService {
         await this.validateClientAdminDeletion(orgId);
       } catch (error) {
         // Change error message for organization context
-        const message = error.message.replace('Cannot delete ClientAdmin', 'Cannot remove ClientAdmin from organization');
+        const message = error.message.replace(
+          'Cannot delete ClientAdmin',
+          'Cannot remove ClientAdmin from organization',
+        );
         return this.createErrorResponse(message);
       }
     }
@@ -335,12 +393,14 @@ export class UsersService {
     await this.cleanupUserDomains(id, ` from organization ${orgId}`);
     await this.cleanupUserModules(id, ` from organization ${orgId}`);
 
-    await this.usersRepository.update(id, { 
+    await this.usersRepository.update(id, {
       deleted_on: new Date(),
-      updated_on: new Date()
+      updated_on: new Date(),
     });
-    
-    return this.createSuccessResponse(`User soft deleted from organization successfully.${reassignmentMessage}`);
+
+    return this.createSuccessResponse(
+      `User soft deleted from organization successfully.${reassignmentMessage}`,
+    );
   }
 
   // ----------------------------------------------------------------------------
@@ -352,10 +412,10 @@ export class UsersService {
    */
   async findByManager(managerId: number): Promise<User[]> {
     return this.usersRepository.find({
-      where: { 
-        manager_id: managerId, 
-        org_id: MoreThan(0),  // Only organization learners
-        deleted_on: IsNull() 
+      where: {
+        manager_id: managerId,
+        org_id: MoreThan(0), // Only organization learners
+        deleted_on: IsNull(),
       },
       relations: this.getStandardRelations(),
     });
@@ -370,18 +430,20 @@ export class UsersService {
    * ClientAdmin can only search within their organization
    */
   async searchUsers(query: string, requestingUser: any): Promise<User[]> {
-    const queryBuilder = this.usersRepository.createQueryBuilder('user')
+    const queryBuilder = this.usersRepository
+      .createQueryBuilder('user')
       .leftJoinAndSelect('user.organization', 'organization')
       .leftJoinAndSelect('user.manager', 'manager')
       .where('user.deleted_on IS NULL')
-      .andWhere(
-        '(user.name LIKE :query OR user.email LIKE :query)',
-        { query: `%${query}%` }
-      );
+      .andWhere('(user.name LIKE :query OR user.email LIKE :query)', {
+        query: `%${query}%`,
+      });
 
     // ClientAdmin can only search within their organization
     if (requestingUser.role === 'ClientAdmin') {
-      queryBuilder.andWhere('user.org_id = :orgId', { orgId: requestingUser.orgId });
+      queryBuilder.andWhere('user.org_id = :orgId', {
+        orgId: requestingUser.orgId,
+      });
     }
 
     return queryBuilder.getMany();
@@ -405,7 +467,10 @@ export class UsersService {
    * Filters users by organization
    * ClientAdmin can only filter their own organization
    */
-  async filterByOrganization(orgId: number, requestingUser: any): Promise<User[]> {
+  async filterByOrganization(
+    orgId: number,
+    requestingUser: any,
+  ): Promise<User[]> {
     // ClientAdmin can only filter their own organization
     if (this.checkClientAdminPermission(requestingUser, orgId)) {
       return [];
@@ -424,59 +489,55 @@ export class UsersService {
    */
   async findUsersWithPagination(
     queryDto: UserQueryDto,
-    requestingUser: any
+    requestingUser: any,
   ): Promise<PaginatedResponseDto<User>> {
     try {
       // Validate that specific resource IDs exist before querying
       await this.validateQueryResources(queryDto);
-      
+
       const queryBuilder = this.buildUserQuery(queryDto, requestingUser);
-      
+
       // Get total count for pagination
       const total = await queryBuilder.getCount();
-      
+
       // Apply pagination
       const page = queryDto.page || 1;
       const limit = queryDto.limit || 20;
       const skip = (page - 1) * limit;
       queryBuilder.skip(skip).take(limit);
-      
+
       // Execute query
       const users = await queryBuilder.getMany();
-      
+
       // Create pagination metadata
-      const pagination = new PaginationMetaDto(
-        page,
-        limit,
-        total
-      );
-      
+      const pagination = new PaginationMetaDto(page, limit, total);
+
       // Create applied filters object
       const appliedFilters = this.createAppliedFiltersObject(queryDto);
-      
+
       return new PaginatedResponseDto(users, pagination, appliedFilters);
     } catch (error) {
       console.error('Error in findUsersWithPagination:', error);
-      
+
       // Handle specific error types according to HTTP status codes
       if (error instanceof BadRequestException) {
         throw error; // Re-throw validation errors (400)
       }
-      
+
       // Handle malformed query parameters (400)
       if (error.message && error.message.includes('invalid')) {
         throw new BadRequestException({
           message: 'Malformed query parameters',
           details: 'Please check your query parameters and try again',
-          error: error.message
+          error: error.message,
         });
       }
-      
+
       // Handle unprocessable entity (422) - valid format but can't be processed
       throw new UnprocessableEntityException({
         message: 'Query parameters are valid but cannot be processed',
         details: 'Please check your filter values and try again',
-        error: error.message
+        error: error.message,
       });
     }
   }
@@ -492,15 +553,20 @@ export class UsersService {
   async getUserStats(requestingUser: any): Promise<any> {
     const whereCondition = this.buildWhereCondition(requestingUser);
 
-    const totalUsers = await this.usersRepository.count({ where: whereCondition });
+    const totalUsers = await this.usersRepository.count({
+      where: whereCondition,
+    });
     const activeUsers = await this.usersRepository.count({
-      where: { ...whereCondition, last_login: MoreThan(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)) }
+      where: {
+        ...whereCondition,
+        last_login: MoreThan(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)),
+      },
     });
 
     return {
       totalUsers,
       activeUsers,
-      inactiveUsers: totalUsers - activeUsers
+      inactiveUsers: totalUsers - activeUsers,
     };
   }
 
@@ -516,7 +582,7 @@ export class UsersService {
 
     for (const role of roles) {
       stats[role] = await this.usersRepository.count({
-        where: { ...whereCondition, role }
+        where: { ...whereCondition, role },
       });
     }
 
@@ -555,14 +621,21 @@ export class UsersService {
    * Allows a user to change their own password
    * Requires current password verification
    */
-  async changePassword(userId: number, currentPassword: string, newPassword: string): Promise<{ success: boolean; message: string }> {
+  async changePassword(
+    userId: number,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<{ success: boolean; message: string }> {
     const user = await this.findOne(userId);
     if (!user) {
       return this.createErrorResponse('User not found');
     }
 
     // Verify current password
-    const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password_hash);
+    const isCurrentPasswordValid = await bcrypt.compare(
+      currentPassword,
+      user.password_hash,
+    );
     if (!isCurrentPasswordValid) {
       return this.createErrorResponse('Current password is incorrect');
     }
@@ -573,7 +646,7 @@ export class UsersService {
     // Update password
     await this.usersRepository.update(userId, {
       password_hash: hashedNewPassword,
-      updated_on: new Date()
+      updated_on: new Date(),
     });
 
     return this.createSuccessResponse('Password changed successfully');
@@ -584,7 +657,11 @@ export class UsersService {
    * No current password verification required
    * ClientAdmin can only reset passwords in their organization
    */
-  async resetPassword(userId: number, newPassword: string, requestingUser: any): Promise<{ success: boolean; message: string }> {
+  async resetPassword(
+    userId: number,
+    newPassword: string,
+    requestingUser: any,
+  ): Promise<{ success: boolean; message: string }> {
     const user = await this.findOne(userId);
     if (!user) {
       return this.createErrorResponse('User not found');
@@ -592,7 +669,9 @@ export class UsersService {
 
     // Check permissions
     if (this.checkClientAdminPermission(requestingUser, user.org_id)) {
-      return this.createErrorResponse('Not authorized to reset password for this user');
+      return this.createErrorResponse(
+        'Not authorized to reset password for this user',
+      );
     }
 
     // Hash new password
@@ -601,7 +680,7 @@ export class UsersService {
     // Update password
     await this.usersRepository.update(userId, {
       password_hash: hashedNewPassword,
-      updated_on: new Date()
+      updated_on: new Date(),
     });
 
     return this.createSuccessResponse('Password reset successfully');
@@ -616,10 +695,10 @@ export class UsersService {
    */
   async findIndividualLearners(): Promise<User[]> {
     return this.usersRepository.find({
-      where: { 
+      where: {
         role: 'Learner',
         org_id: IsNull(),
-        deleted_on: IsNull() 
+        deleted_on: IsNull(),
       },
       relations: this.getStandardRelations(),
     });
@@ -653,7 +732,7 @@ export class UsersService {
    * ClientAdmin is restricted to their organization
    */
   private buildWhereCondition(requestingUser: any): any {
-    let whereCondition: any = { deleted_on: IsNull() };
+    const whereCondition: any = { deleted_on: IsNull() };
     if (requestingUser.role === 'ClientAdmin' && requestingUser.orgId != null) {
       whereCondition.org_id = requestingUser.orgId;
     }
@@ -663,8 +742,15 @@ export class UsersService {
   /**
    * Checks if ClientAdmin is trying to access a user outside their organization
    */
-  private checkClientAdminPermission(requestingUser: any, userOrgId: number): boolean {
-    return requestingUser.role === 'ClientAdmin' && requestingUser.orgId != null && userOrgId !== requestingUser.orgId;
+  private checkClientAdminPermission(
+    requestingUser: any,
+    userOrgId: number,
+  ): boolean {
+    return (
+      requestingUser.role === 'ClientAdmin' &&
+      requestingUser.orgId != null &&
+      userOrgId !== requestingUser.orgId
+    );
   }
 
   // ----------------------------------------------------------------------------
@@ -674,20 +760,26 @@ export class UsersService {
   /**
    * Creates a standardized error response
    */
-  private createErrorResponse(message: string): { success: boolean; message: string } {
+  private createErrorResponse(message: string): {
+    success: boolean;
+    message: string;
+  } {
     return {
       success: false,
-      message
+      message,
     };
   }
 
   /**
    * Creates a standardized success response
    */
-  private createSuccessResponse(message: string): { success: boolean; message: string } {
+  private createSuccessResponse(message: string): {
+    success: boolean;
+    message: string;
+  } {
     return {
       success: true,
-      message
+      message,
     };
   }
 
@@ -711,19 +803,24 @@ export class UsersService {
    * Validates that a manager can be deleted (no active learners)
    * @throws BadRequestException if manager has active learners
    */
-  private async validateManagerDeletion(managerId: number, orgId: number): Promise<void> {
+  private async validateManagerDeletion(
+    managerId: number,
+    orgId: number,
+  ): Promise<void> {
     const activeLearners = await this.usersRepository.find({
-      where: { 
-        manager_id: managerId, 
-        org_id: orgId, 
-        deleted_on: IsNull() 
-      }
+      where: {
+        manager_id: managerId,
+        org_id: orgId,
+        deleted_on: IsNull(),
+      },
     });
 
     if (activeLearners.length > 0) {
-      const learnerNames = activeLearners.map(learner => learner.name).join(', ');
+      const learnerNames = activeLearners
+        .map((learner) => learner.name)
+        .join(', ');
       throw new BadRequestException(
-        `Cannot delete manager. They have ${activeLearners.length} active learner(s): ${learnerNames}. `
+        `Cannot delete manager. They have ${activeLearners.length} active learner(s): ${learnerNames}. `,
       );
     }
   }
@@ -734,11 +831,11 @@ export class UsersService {
    */
   private async validateClientAdminDeletion(orgId: number): Promise<void> {
     const activeUsers = await this.usersRepository.find({
-      where: { 
-        org_id: orgId, 
+      where: {
+        org_id: orgId,
         deleted_on: IsNull(),
-        user_id: MoreThan(0)
-      }
+        user_id: MoreThan(0),
+      },
     });
 
     if (activeUsers.length > 0) {
@@ -752,7 +849,7 @@ export class UsersService {
         .join(', ');
 
       throw new BadRequestException(
-        `Cannot delete ClientAdmin. They have ${activeUsers.length} active user(s) in the organization: ${breakdownText}.`
+        `Cannot delete ClientAdmin. They have ${activeUsers.length} active user(s) in the organization: ${breakdownText}.`,
       );
     }
   }
@@ -761,7 +858,10 @@ export class UsersService {
    * Validates email uniqueness when updating
    * @throws ConflictException if email already exists
    */
-  private async validateEmailUniqueness(email: string | undefined, currentEmail: string): Promise<void> {
+  private async validateEmailUniqueness(
+    email: string | undefined,
+    currentEmail: string,
+  ): Promise<void> {
     if (email && email !== currentEmail) {
       const duplicateEmail = await this.findByEmail(email);
       if (duplicateEmail) {
@@ -774,19 +874,27 @@ export class UsersService {
    * Validates manager creation rules
    * Manager requires a ClientAdmin in the organization
    */
-  private async validateManagerCreation(createUserDto: CreateUserDto): Promise<boolean> {
+  private async validateManagerCreation(
+    createUserDto: CreateUserDto,
+  ): Promise<boolean> {
     // If creating a manager, ensure ClientAdmin exists in the organization
-    if (createUserDto.role === 'Manager' && createUserDto.org_id && createUserDto.org_id > 0) {
+    if (
+      createUserDto.role === 'Manager' &&
+      createUserDto.org_id &&
+      createUserDto.org_id > 0
+    ) {
       const clientAdmin = await this.usersRepository.findOne({
-        where: { 
-          org_id: createUserDto.org_id, 
-          role: 'ClientAdmin', 
-          deleted_on: IsNull() 
-        }
+        where: {
+          org_id: createUserDto.org_id,
+          role: 'ClientAdmin',
+          deleted_on: IsNull(),
+        },
       });
-      
+
       if (!clientAdmin) {
-        throw new BadRequestException('Cannot create Manager: No ClientAdmin exists in the organization');
+        throw new BadRequestException(
+          'Cannot create Manager: No ClientAdmin exists in the organization',
+        );
       }
     }
     return true;
@@ -796,18 +904,22 @@ export class UsersService {
    * Validates PlatformAdmin creation rules
    * Only one PlatformAdmin allowed in the system
    */
-  private async validatePlatformAdminCreation(createUserDto: CreateUserDto): Promise<boolean> {
+  private async validatePlatformAdminCreation(
+    createUserDto: CreateUserDto,
+  ): Promise<boolean> {
     // If creating a PlatformAdmin, ensure no other PlatformAdmin exists in the system
     if (createUserDto.role === 'PlatformAdmin') {
       const existingPlatformAdmin = await this.usersRepository.findOne({
-        where: { 
-          role: 'PlatformAdmin', 
-          deleted_on: IsNull() 
-        }
+        where: {
+          role: 'PlatformAdmin',
+          deleted_on: IsNull(),
+        },
       });
-      
+
       if (existingPlatformAdmin) {
-        throw new ConflictException('Cannot create PlatformAdmin: A PlatformAdmin already exists in the system');
+        throw new ConflictException(
+          'Cannot create PlatformAdmin: A PlatformAdmin already exists in the system',
+        );
       }
     }
     return true;
@@ -817,19 +929,27 @@ export class UsersService {
    * Validates ClientAdmin creation rules
    * Only one ClientAdmin per organization
    */
-  private async validateClientAdminCreation(createUserDto: CreateUserDto): Promise<boolean> {
+  private async validateClientAdminCreation(
+    createUserDto: CreateUserDto,
+  ): Promise<boolean> {
     // If creating a ClientAdmin, ensure no other ClientAdmin exists in the organization
-    if (createUserDto.role === 'ClientAdmin' && createUserDto.org_id && createUserDto.org_id > 0) {
+    if (
+      createUserDto.role === 'ClientAdmin' &&
+      createUserDto.org_id &&
+      createUserDto.org_id > 0
+    ) {
       const existingClientAdmin = await this.usersRepository.findOne({
-        where: { 
-          org_id: createUserDto.org_id, 
-          role: 'ClientAdmin', 
-          deleted_on: IsNull() 
-        }
+        where: {
+          org_id: createUserDto.org_id,
+          role: 'ClientAdmin',
+          deleted_on: IsNull(),
+        },
       });
-      
+
       if (existingClientAdmin) {
-        throw new ConflictException('Cannot create ClientAdmin: Organization already has a ClientAdmin');
+        throw new ConflictException(
+          'Cannot create ClientAdmin: Organization already has a ClientAdmin',
+        );
       }
     }
     return true;
@@ -839,26 +959,31 @@ export class UsersService {
    * Validates user update rules (especially role changes)
    * Enforces PlatformAdmin, ClientAdmin, and Manager restrictions
    */
-  private async validateUserUpdate(id: number, updateUserDto: UpdateUserDto): Promise<boolean> {
+  private async validateUserUpdate(
+    id: number,
+    updateUserDto: UpdateUserDto,
+  ): Promise<boolean> {
     // Prevent updating role to PlatformAdmin (only one Platform Admin allowed)
     if (updateUserDto.role === 'PlatformAdmin') {
       const currentUser = await this.findOne(id);
-      
+
       // If user is already a Platform Admin, allow the update
       if (currentUser && currentUser.role === 'PlatformAdmin') {
         return true;
       }
-      
+
       // Otherwise, check if another Platform Admin exists
       const existingPlatformAdmin = await this.usersRepository.findOne({
-        where: { 
-          role: 'PlatformAdmin', 
-          deleted_on: IsNull()
-        }
+        where: {
+          role: 'PlatformAdmin',
+          deleted_on: IsNull(),
+        },
       });
-      
+
       if (existingPlatformAdmin) {
-        throw new ConflictException('Cannot update to PlatformAdmin: A PlatformAdmin already exists in the system');
+        throw new ConflictException(
+          'Cannot update to PlatformAdmin: A PlatformAdmin already exists in the system',
+        );
       }
     }
 
@@ -870,16 +995,18 @@ export class UsersService {
       }
 
       const existingClientAdmin = await this.usersRepository.findOne({
-        where: { 
-          org_id: currentUser.org_id, 
-          role: 'ClientAdmin', 
+        where: {
+          org_id: currentUser.org_id,
+          role: 'ClientAdmin',
           deleted_on: IsNull(),
-          user_id: MoreThan(0) // Exclude current user
-        }
+          user_id: MoreThan(0), // Exclude current user
+        },
       });
-      
+
       if (existingClientAdmin) {
-        throw new ConflictException('Cannot update to ClientAdmin: Organization already has a ClientAdmin');
+        throw new ConflictException(
+          'Cannot update to ClientAdmin: Organization already has a ClientAdmin',
+        );
       }
     }
 
@@ -891,15 +1018,17 @@ export class UsersService {
       }
 
       const clientAdmin = await this.usersRepository.findOne({
-        where: { 
-          org_id: currentUser.org_id, 
-          role: 'ClientAdmin', 
-          deleted_on: IsNull() 
-        }
+        where: {
+          org_id: currentUser.org_id,
+          role: 'ClientAdmin',
+          deleted_on: IsNull(),
+        },
       });
-      
+
       if (!clientAdmin) {
-        throw new BadRequestException('Cannot update to Manager: No ClientAdmin exists in the organization');
+        throw new BadRequestException(
+          'Cannot update to Manager: No ClientAdmin exists in the organization',
+        );
       }
     }
 
@@ -917,11 +1046,13 @@ export class UsersService {
         where: {
           org_id: queryDto.orgId,
           deleted_on: IsNull(),
-        }
+        },
       });
 
       if (!organization) {
-        throw new NotFoundException(`Organization with ID ${queryDto.orgId} not found`);
+        throw new NotFoundException(
+          `Organization with ID ${queryDto.orgId} not found`,
+        );
       }
     }
 
@@ -931,16 +1062,20 @@ export class UsersService {
         where: {
           user_id: queryDto.managerId,
           deleted_on: IsNull(),
-        }
+        },
       });
 
       if (!manager) {
-        throw new NotFoundException(`Manager with ID ${queryDto.managerId} not found`);
+        throw new NotFoundException(
+          `Manager with ID ${queryDto.managerId} not found`,
+        );
       }
 
       // Validate that the user is actually a manager
       if (manager.role !== UserRole.MANAGER) {
-        throw new BadRequestException(`User with ID ${queryDto.managerId} is not a manager`);
+        throw new BadRequestException(
+          `User with ID ${queryDto.managerId} is not a manager`,
+        );
       }
     }
   }
@@ -952,17 +1087,25 @@ export class UsersService {
   /**
    * Cleans up user domain associations before deletion
    */
-  private async cleanupUserDomains(userId: number, context: string = ''): Promise<void> {
+  private async cleanupUserDomains(
+    userId: number,
+    context: string = '',
+  ): Promise<void> {
     try {
       const userDomains = await this.userDomainsService.listUserDomains(userId);
       if (userDomains.length > 0) {
         for (const domain of userDomains) {
           await this.userDomainsService.unlink(userId, domain.id);
         }
-        console.log(`Cleaned up ${userDomains.length} domain associations for user ${userId}${context}`);
+        console.log(
+          `Cleaned up ${userDomains.length} domain associations for user ${userId}${context}`,
+        );
       }
     } catch (error) {
-      console.error(`Error cleaning up domain associations for user ${userId}${context}:`, error);
+      console.error(
+        `Error cleaning up domain associations for user ${userId}${context}:`,
+        error,
+      );
       // Continue even if domain cleanup fails
     }
   }
@@ -970,14 +1113,23 @@ export class UsersService {
   /**
    * Cleans up user module enrollments before deletion
    */
-  private async cleanupUserModules(userId: number, context: string = ''): Promise<void> {
+  private async cleanupUserModules(
+    userId: number,
+    context: string = '',
+  ): Promise<void> {
     try {
-      const cleanedCount = await this.userModulesService.cleanupUserModules(userId);
+      const cleanedCount =
+        await this.userModulesService.cleanupUserModules(userId);
       if (cleanedCount > 0) {
-        console.log(`Cleaned up ${cleanedCount} module enrollment(s) for user ${userId}${context}`);
+        console.log(
+          `Cleaned up ${cleanedCount} module enrollment(s) for user ${userId}${context}`,
+        );
       }
     } catch (error) {
-      console.error(`Error cleaning up module enrollments for user ${userId}${context}:`, error);
+      console.error(
+        `Error cleaning up module enrollments for user ${userId}${context}:`,
+        error,
+      );
       // Continue even if module cleanup fails
     }
   }
@@ -991,12 +1143,14 @@ export class UsersService {
    */
   private async prepareUpdateData(updateUserDto: UpdateUserDto): Promise<any> {
     const updateData: any = { ...updateUserDto };
-    
+
     if (updateUserDto.password) {
-      updateData.password_hash = await this.hashPassword(updateUserDto.password);
+      updateData.password_hash = await this.hashPassword(
+        updateUserDto.password,
+      );
       delete updateData.password;
     }
-    
+
     return updateData;
   }
 
@@ -1004,9 +1158,12 @@ export class UsersService {
    * Reassigns manager's team members to ClientAdmin before manager deletion
    * Returns count of reassigned team members
    */
-  private async reassignManagerTeamMembers(managerId: number, orgId: number): Promise<number> {
+  private async reassignManagerTeamMembers(
+    managerId: number,
+    orgId: number,
+  ): Promise<number> {
     const teamMembers = await this.usersRepository.find({
-      where: { manager_id: managerId, org_id: orgId, deleted_on: IsNull() }
+      where: { manager_id: managerId, org_id: orgId, deleted_on: IsNull() },
     });
 
     const teamMembersCount = teamMembers.length;
@@ -1014,31 +1171,33 @@ export class UsersService {
     if (teamMembers.length > 0) {
       // Find ClientAdmin in the same organization
       const clientAdmin = await this.usersRepository.findOne({
-        where: { 
-          org_id: orgId, 
-          role: 'ClientAdmin', 
-          deleted_on: IsNull() 
-        }
+        where: {
+          org_id: orgId,
+          role: 'ClientAdmin',
+          deleted_on: IsNull(),
+        },
       });
 
       if (clientAdmin) {
         // Reassign team members to ClientAdmin
         await this.usersRepository.update(
           { manager_id: managerId, org_id: orgId, deleted_on: IsNull() },
-          { manager_id: clientAdmin.user_id }
+          { manager_id: clientAdmin.user_id },
         );
       } else {
         // Business rule: If no ClientAdmin exists, managers shouldn't exist either
         // This indicates a data integrity issue - log it and handle appropriately
-        console.error(`Data integrity issue: Manager ${managerId} exists without ClientAdmin in org ${orgId}`);
-        
+        console.error(
+          `Data integrity issue: Manager ${managerId} exists without ClientAdmin in org ${orgId}`,
+        );
+
         // Remove manager assignment and log the issue
         await this.usersRepository.update(
           { manager_id: managerId, org_id: orgId, deleted_on: IsNull() },
-          { manager_id: null }
+          { manager_id: null },
         );
-        
-        // Note: In a production system, you might want to throw an error or 
+
+        // Note: In a production system, you might want to throw an error or
         // prevent deletion until ClientAdmin is assigned to maintain data integrity
       }
     }
@@ -1053,7 +1212,10 @@ export class UsersService {
   /**
    * Builds a query builder with filters and sorting for pagination
    */
-  private buildUserQuery(queryDto: UserQueryDto, requestingUser: any): SelectQueryBuilder<User> {
+  private buildUserQuery(
+    queryDto: UserQueryDto,
+    requestingUser: any,
+  ): SelectQueryBuilder<User> {
     const queryBuilder = this.usersRepository
       .createQueryBuilder('user')
       .select(['user.user_id', 'user.name', 'user.email', 'user.role'])
@@ -1061,12 +1223,14 @@ export class UsersService {
 
     // Apply role-based access control
     if (requestingUser.role === 'ClientAdmin' && requestingUser.orgId != null) {
-      queryBuilder.andWhere('user.org_id = :orgId', { orgId: requestingUser.orgId });
+      queryBuilder.andWhere('user.org_id = :orgId', {
+        orgId: requestingUser.orgId,
+      });
     }
 
     // Apply filters
     this.applyFilters(queryBuilder, queryDto);
-    
+
     // Apply sorting
     this.applySorting(queryBuilder, queryDto);
 
@@ -1076,7 +1240,10 @@ export class UsersService {
   /**
    * Applies filters to a query builder based on query DTO
    */
-  private applyFilters(queryBuilder: SelectQueryBuilder<User>, queryDto: UserQueryDto): void {
+  private applyFilters(
+    queryBuilder: SelectQueryBuilder<User>,
+    queryDto: UserQueryDto,
+  ): void {
     // Role filter
     if (queryDto.role) {
       queryBuilder.andWhere('user.role = :role', { role: queryDto.role });
@@ -1089,63 +1256,92 @@ export class UsersService {
 
     // Manager filter
     if (queryDto.managerId) {
-      queryBuilder.andWhere('user.manager_id = :managerId', { managerId: queryDto.managerId });
+      queryBuilder.andWhere('user.manager_id = :managerId', {
+        managerId: queryDto.managerId,
+      });
     }
 
     // Active filter (based on last_login)
     if (queryDto.active !== undefined) {
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       if (queryDto.active) {
-        queryBuilder.andWhere('user.last_login > :thirtyDaysAgo', { thirtyDaysAgo });
+        queryBuilder.andWhere('user.last_login > :thirtyDaysAgo', {
+          thirtyDaysAgo,
+        });
       } else {
-        queryBuilder.andWhere('(user.last_login IS NULL OR user.last_login <= :thirtyDaysAgo)', { thirtyDaysAgo });
+        queryBuilder.andWhere(
+          '(user.last_login IS NULL OR user.last_login <= :thirtyDaysAgo)',
+          { thirtyDaysAgo },
+        );
       }
     }
 
     // Location filter
     if (queryDto.location) {
-      queryBuilder.andWhere('user.location LIKE :location', { location: `%${queryDto.location}%` });
+      queryBuilder.andWhere('user.location LIKE :location', {
+        location: `%${queryDto.location}%`,
+      });
     }
 
     // Device number filter
     if (queryDto.deviceNo) {
-      queryBuilder.andWhere('user.registered_device_no LIKE :deviceNo', { deviceNo: `%${queryDto.deviceNo}%` });
+      queryBuilder.andWhere('user.registered_device_no LIKE :deviceNo', {
+        deviceNo: `%${queryDto.deviceNo}%`,
+      });
     }
 
     // Tool ID filter
     if (queryDto.toolId) {
-      queryBuilder.andWhere('user.tool_id = :toolId', { toolId: queryDto.toolId });
+      queryBuilder.andWhere('user.tool_id = :toolId', {
+        toolId: queryDto.toolId,
+      });
     }
 
     // Phone filter
     if (queryDto.phone) {
-      queryBuilder.andWhere('user.user_phone LIKE :phone', { phone: `%${queryDto.phone}%` });
+      queryBuilder.andWhere('user.user_phone LIKE :phone', {
+        phone: `%${queryDto.phone}%`,
+      });
     }
 
     // Date range filters
     if (queryDto.joinedAfter || queryDto.joinedBefore) {
       if (queryDto.joinedAfter && queryDto.joinedBefore) {
-        queryBuilder.andWhere('user.joined_on BETWEEN :joinedAfter AND :joinedBefore', {
-          joinedAfter: queryDto.joinedAfter,
-          joinedBefore: queryDto.joinedBefore
-        });
+        queryBuilder.andWhere(
+          'user.joined_on BETWEEN :joinedAfter AND :joinedBefore',
+          {
+            joinedAfter: queryDto.joinedAfter,
+            joinedBefore: queryDto.joinedBefore,
+          },
+        );
       } else if (queryDto.joinedAfter) {
-        queryBuilder.andWhere('user.joined_on >= :joinedAfter', { joinedAfter: queryDto.joinedAfter });
+        queryBuilder.andWhere('user.joined_on >= :joinedAfter', {
+          joinedAfter: queryDto.joinedAfter,
+        });
       } else if (queryDto.joinedBefore) {
-        queryBuilder.andWhere('user.joined_on <= :joinedBefore', { joinedBefore: queryDto.joinedBefore });
+        queryBuilder.andWhere('user.joined_on <= :joinedBefore', {
+          joinedBefore: queryDto.joinedBefore,
+        });
       }
     }
 
     if (queryDto.updatedAfter || queryDto.updatedBefore) {
       if (queryDto.updatedAfter && queryDto.updatedBefore) {
-        queryBuilder.andWhere('user.updated_on BETWEEN :updatedAfter AND :updatedBefore', {
-          updatedAfter: queryDto.updatedAfter,
-          updatedBefore: queryDto.updatedBefore
-        });
+        queryBuilder.andWhere(
+          'user.updated_on BETWEEN :updatedAfter AND :updatedBefore',
+          {
+            updatedAfter: queryDto.updatedAfter,
+            updatedBefore: queryDto.updatedBefore,
+          },
+        );
       } else if (queryDto.updatedAfter) {
-        queryBuilder.andWhere('user.updated_on >= :updatedAfter', { updatedAfter: queryDto.updatedAfter });
+        queryBuilder.andWhere('user.updated_on >= :updatedAfter', {
+          updatedAfter: queryDto.updatedAfter,
+        });
       } else if (queryDto.updatedBefore) {
-        queryBuilder.andWhere('user.updated_on <= :updatedBefore', { updatedBefore: queryDto.updatedBefore });
+        queryBuilder.andWhere('user.updated_on <= :updatedBefore', {
+          updatedBefore: queryDto.updatedBefore,
+        });
       }
     }
 
@@ -1153,7 +1349,7 @@ export class UsersService {
     if (queryDto.search) {
       queryBuilder.andWhere(
         '(user.name LIKE :search OR user.email LIKE :search)',
-        { search: `%${queryDto.search}%` }
+        { search: `%${queryDto.search}%` },
       );
     }
   }
@@ -1161,10 +1357,13 @@ export class UsersService {
   /**
    * Applies sorting to a query builder
    */
-  private applySorting(queryBuilder: SelectQueryBuilder<User>, queryDto: UserQueryDto): void {
+  private applySorting(
+    queryBuilder: SelectQueryBuilder<User>,
+    queryDto: UserQueryDto,
+  ): void {
     const sortBy = queryDto.sortBy || SortBy.EMAIL;
     const sortOrder = queryDto.sortOrder || SortOrder.ASC;
-    
+
     // Map sortBy enum to actual database column names
     const columnMapping = {
       [SortBy.NAME]: 'user.name',
@@ -1183,9 +1382,11 @@ export class UsersService {
   /**
    * Creates an object containing all applied filters from query DTO
    */
-  private createAppliedFiltersObject(queryDto: UserQueryDto): Record<string, any> {
+  private createAppliedFiltersObject(
+    queryDto: UserQueryDto,
+  ): Record<string, any> {
     const filters: Record<string, any> = {};
-    
+
     if (queryDto.role) filters.role = queryDto.role;
     if (queryDto.orgId) filters.orgId = queryDto.orgId;
     if (queryDto.managerId) filters.managerId = queryDto.managerId;
@@ -1199,7 +1400,7 @@ export class UsersService {
     if (queryDto.updatedAfter) filters.updatedAfter = queryDto.updatedAfter;
     if (queryDto.updatedBefore) filters.updatedBefore = queryDto.updatedBefore;
     if (queryDto.search) filters.search = queryDto.search;
-    
+
     return filters;
   }
 }

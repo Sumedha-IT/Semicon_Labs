@@ -11,5 +11,3 @@ import { UserDomainsService } from './user-domains.service';
   exports: [UserDomainsService],
 })
 export class UserDomainsModule {}
-
-

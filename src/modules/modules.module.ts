@@ -9,11 +9,7 @@ import { UserModulesModule } from '../user-modules/user-modules.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([
-      ModuleEntity,
-      DomainModule,
-      Domain,
-    ]),
+    TypeOrmModule.forFeature([ModuleEntity, DomainModule, Domain]),
     UserModulesModule,
   ],
   controllers: [ModulesController],

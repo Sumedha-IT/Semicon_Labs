@@ -7,4 +7,3 @@ export class LinkDomainsDto {
   @IsPositive({ each: true, message: 'Each domain ID must be positive' })
   domainIds: number[];
 }
-

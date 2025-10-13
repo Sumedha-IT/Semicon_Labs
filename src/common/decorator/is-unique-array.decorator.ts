@@ -1,7 +1,11 @@
-import { registerDecorator, ValidationOptions, ValidationArguments } from 'class-validator';
+import {
+  registerDecorator,
+  ValidationOptions,
+  ValidationArguments,
+} from 'class-validator';
 
 export function IsUniqueArray(validationOptions?: ValidationOptions) {
-  return function (object: Object, propertyName: string) {
+  return function (object: object, propertyName: string) {
     registerDecorator({
       name: 'isUniqueArray',
       target: object.constructor,
@@ -22,4 +26,3 @@ export function IsUniqueArray(validationOptions?: ValidationOptions) {
     });
   };
 }
-

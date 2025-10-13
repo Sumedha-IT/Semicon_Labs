@@ -16,4 +16,3 @@ import { UserDomain } from '../user-domains/entities/user-domain.entity';
   exports: [UserModulesService, ModuleUsersService],
 })
 export class UserModulesModule {}
-

@@ -9,5 +9,3 @@ export class CreateDomainDto {
   @IsString()
   description?: string;
 }
-
-

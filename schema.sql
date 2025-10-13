@@ -108,6 +108,7 @@ CREATE TABLE modules (
     "desc" TEXT NULL,
     duration INTEGER NULL, -- Duration in minutes
     level VARCHAR(50) NULL CHECK (level IN ('Beginner', 'Intermediate', 'Advanced')),
+    threshold_score NUMERIC(5,2) DEFAULT 70 CHECK (threshold_score >= 0 AND threshold_score <= 100), -- Passing threshold score (0-100)
     created_on TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_on TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     domain_id INTEGER NOT NULL REFERENCES domains(id) ON DELETE CASCADE,

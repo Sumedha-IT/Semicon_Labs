@@ -1,4 +1,12 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  OneToMany,
+} from 'typeorm';
+import { DomainModule } from './domain-module.entity';
 
 @Entity({ name: 'modules' })
 export class Module {
@@ -20,6 +28,9 @@ export class Module {
   @Column({ length: 50, nullable: false })
   level: string; // Beginner, Intermediate, Advanced
 
+  @Column({ type: 'decimal', precision: 5, scale: 2, default: 70 })
+  threshold_score: number; // Passing threshold score (0-100)
+
   @CreateDateColumn({ name: 'created_on', type: 'timestamptz' })
   created_on: Date;
 
@@ -27,4 +38,6 @@ export class Module {
   updated_on: Date;
 
   // Many-to-many relationship with domains handled through domain_modules join table
+  @OneToMany(() => DomainModule, (domainModule) => domainModule.module)
+  domainModules: DomainModule[];
 }

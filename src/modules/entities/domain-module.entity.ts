@@ -1,4 +1,12 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, JoinColumn, Index } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  ManyToOne,
+  JoinColumn,
+  Index,
+} from 'typeorm';
 import { Domain } from '../../domains/entities/domain.entity';
 import { Module } from './module.entity';
 
@@ -25,4 +33,3 @@ export class DomainModule {
   @JoinColumn({ name: 'module_id' })
   module: Module;
 }
-

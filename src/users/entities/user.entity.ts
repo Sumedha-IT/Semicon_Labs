@@ -1,4 +1,11 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  ManyToOne,
+  JoinColumn,
+} from 'typeorm';
 import { Organization } from '../../organizations/entities/organization.entity';
 
 @Entity({ name: 'users' })
@@ -32,8 +39,6 @@ export class User {
 
   @Column({ nullable: false })
   tool_id: number;
-
-  
 
   @Column({ nullable: true })
   org_id: number;

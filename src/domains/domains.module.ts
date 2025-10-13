@@ -11,5 +11,3 @@ import { Domain } from './entities/domain.entity';
   exports: [DomainsService],
 })
 export class DomainsModule {}
-
-

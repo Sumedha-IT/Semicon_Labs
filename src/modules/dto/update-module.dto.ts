@@ -1,4 +1,13 @@
-import { IsString, IsNumber, IsArray, IsOptional, MaxLength, IsIn } from 'class-validator';
+import {
+  IsString,
+  IsNumber,
+  IsArray,
+  IsOptional,
+  MaxLength,
+  IsIn,
+  Min,
+  Max,
+} from 'class-validator';
 
 export class UpdateModuleDto {
   @IsOptional()
@@ -23,6 +32,12 @@ export class UpdateModuleDto {
   @IsString()
   @IsIn(['Beginner', 'Intermediate', 'Advanced'])
   level?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  threshold_score?: number; // Passing threshold score (0-100)
 
   // Note: Domain associations are updated via separate link/unlink endpoints
 }

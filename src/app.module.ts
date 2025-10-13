@@ -18,7 +18,8 @@ import { UserModulesModule } from './user-modules/user-modules.module';
     }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => typeOrmConfig(configService),
+      useFactory: (configService: ConfigService) =>
+        typeOrmConfig(configService),
       inject: [ConfigService],
     }),
     AuthModule,

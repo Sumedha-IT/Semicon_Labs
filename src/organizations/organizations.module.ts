@@ -12,7 +12,7 @@ import { UserModulesModule } from '../user-modules/user-modules.module';
   imports: [
     TypeOrmModule.forFeature([Organization, User]),
     UserDomainsModule,
-    UserModulesModule
+    UserModulesModule,
   ],
   controllers: [OrganizationsController],
   providers: [OrganizationsService, UsersService],

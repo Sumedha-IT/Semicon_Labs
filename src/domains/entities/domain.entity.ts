@@ -1,4 +1,13 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  Index,
+  OneToMany,
+} from 'typeorm';
+import { DomainModule } from '../../modules/entities/domain-module.entity';
 
 @Entity({ name: 'domains' })
 export class Domain {
@@ -17,6 +26,7 @@ export class Domain {
 
   @UpdateDateColumn({ name: 'updated_on', type: 'timestamptz' })
   updated_on: Date;
+
+  @OneToMany(() => DomainModule, (domainModule) => domainModule.domain)
+  domainModules: DomainModule[];
 }
-
-

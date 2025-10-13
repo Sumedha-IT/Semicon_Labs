@@ -30,61 +30,72 @@ export class UserDomainsService {
    * @returns Object with linked, skipped, invalid domain IDs
    */
   async link(
-    userId: number, 
-    domainIds: number[]
-  ): Promise<{ 
-    linked: number[]; 
-    skipped: number[]; 
-    invalid: number[]; 
-    duplicates?: number[] 
+    userId: number,
+    domainIds: number[],
+  ): Promise<{
+    linked: number[];
+    skipped: number[];
+    invalid: number[];
+    duplicates?: number[];
   }> {
     // Validate user exists
     await this.validateUserExists(userId);
-    
+
     // Remove duplicates and track them
     const uniqueDomainIds = [...new Set(domainIds)];
-    const duplicates = domainIds.length !== uniqueDomainIds.length 
-      ? domainIds.filter((id, index) => domainIds.indexOf(id) !== index)
-      : [];
-    
+    const duplicates =
+      domainIds.length !== uniqueDomainIds.length
+        ? domainIds.filter((id, index) => domainIds.indexOf(id) !== index)
+        : [];
+
     // Validate which domains exist
     const validDomains = await this.domainRepo.find({
-      where: uniqueDomainIds.map(id => ({ id }))
+      where: uniqueDomainIds.map((id) => ({ id })),
     });
-    
-    const validDomainIds = validDomains.map(domain => domain.id);
-    const invalidDomainIds = uniqueDomainIds.filter(id => !validDomainIds.includes(id));
-    
+
+    const validDomainIds = validDomains.map((domain) => domain.id);
+    const invalidDomainIds = uniqueDomainIds.filter(
+      (id) => !validDomainIds.includes(id),
+    );
+
     // If no valid domains, return early
     if (validDomainIds.length === 0) {
       return {
         linked: [],
         skipped: [],
         invalid: invalidDomainIds,
-        ...(duplicates.length > 0 && { duplicates })
+        ...(duplicates.length > 0 && { duplicates }),
       };
     }
-    
+
     // Check which valid domains are already linked
     const existingLinks = await this.repo.find({
-      where: validDomainIds.map(domainId => ({ user_id: userId, domain_id: domainId }))
+      where: validDomainIds.map((domainId) => ({
+        user_id: userId,
+        domain_id: domainId,
+      })),
     });
-    
-    const existingDomainIds = existingLinks.map(link => link.domain_id);
-    const newDomainIds = validDomainIds.filter(id => !existingDomainIds.includes(id));
-    
+
+    const existingDomainIds = existingLinks.map((link) => link.domain_id);
+    const newDomainIds = validDomainIds.filter(
+      (id) => !existingDomainIds.includes(id),
+    );
+
     // If no new domains to link, return early
     if (newDomainIds.length === 0) {
-      return { 
-        linked: [], 
+      return {
+        linked: [],
         skipped: existingDomainIds,
         invalid: invalidDomainIds,
-        ...(duplicates.length > 0 && { duplicates })
+        ...(duplicates.length > 0 && { duplicates }),
       };
     }
-    
+
     // Insert new domain links using insert with orIgnore
-    const values = newDomainIds.map((id) => ({ user_id: userId, domain_id: id }));
+    const values = newDomainIds.map((id) => ({
+      user_id: userId,
+      domain_id: id,
+    }));
     await this.repo
       .createQueryBuilder()
       .insert()
@@ -92,12 +103,12 @@ export class UserDomainsService {
       .values(values)
       .orIgnore()
       .execute();
-    
-    return { 
-      linked: newDomainIds, 
+
+    return {
+      linked: newDomainIds,
       skipped: existingDomainIds,
       invalid: invalidDomainIds,
-      ...(duplicates.length > 0 && { duplicates })
+      ...(duplicates.length > 0 && { duplicates }),
     };
   }
 
@@ -105,23 +116,29 @@ export class UserDomainsService {
    * Unlinks a user from a domain
    * Validates both user and domain exist before unlinking
    */
-  async unlink(userId: number, domainId: number): Promise<{ success: boolean; message: string }> {
+  async unlink(
+    userId: number,
+    domainId: number,
+  ): Promise<{ success: boolean; message: string }> {
     // Validate both user and domain exist in parallel
     await this.validateUserAndDomainExist(userId, domainId);
-    
+
     // Check if the relationship exists before deleting
-    const result = await this.repo.delete({ user_id: userId, domain_id: domainId });
-    
+    const result = await this.repo.delete({
+      user_id: userId,
+      domain_id: domainId,
+    });
+
     if (result.affected === 0) {
       return {
         success: false,
-        message: `User ${userId} is not linked to domain ${domainId}`
+        message: `User ${userId} is not linked to domain ${domainId}`,
       };
     }
-    
+
     return {
       success: true,
-      message: `Successfully unlinked user ${userId} from domain ${domainId}`
+      message: `Successfully unlinked user ${userId} from domain ${domainId}`,
     };
   }
 
@@ -133,19 +150,25 @@ export class UserDomainsService {
    * Lists all domains assigned to a user
    * Returns domain details: id, name, description
    */
-  async listUserDomains(userId: number): Promise<Array<{ id: number; name: string; description: string | null }>> {
+  async listUserDomains(
+    userId: number,
+  ): Promise<Array<{ id: number; name: string; description: string | null }>> {
     // Validate user exists
     await this.validateUserExists(userId);
-    
-    const rows = await this.repo
-      .createQueryBuilder('ud')
-      .innerJoin('domains', 'd', 'd.id = ud.domain_id')
-      .where('ud.user_id = :userId', { userId })
-      .select(['d.id AS id', 'd.name AS name', 'd.description AS description'])
-      .orderBy('d.name', 'ASC')
-      .getRawMany();
-      
-    return rows;
+
+    // Use entity objects with relations
+    const userDomains = await this.repo.find({
+      where: { user_id: userId },
+      relations: { domain: true },
+      order: { domain: { name: 'ASC' } },
+    });
+
+    // Map to response format
+    return userDomains.map((ud) => ({
+      id: ud.domain.id,
+      name: ud.domain.name,
+      description: ud.domain.description ?? null,
+    }));
   }
 
   // ============================================================================
@@ -162,9 +185,9 @@ export class UserDomainsService {
    */
   private async validateUserExists(userId: number): Promise<void> {
     const user = await this.userRepo.findOne({
-      where: { user_id: userId, deleted_on: IsNull() }
+      where: { user_id: userId, deleted_on: IsNull() },
     });
-    
+
     if (!user) {
       throw new NotFoundException(`User with ID ${userId} not found`);
     }
@@ -176,7 +199,7 @@ export class UserDomainsService {
    */
   private async validateDomainExists(domainId: number): Promise<void> {
     const domain = await this.domainRepo.findOne({ where: { id: domainId } });
-    
+
     if (!domain) {
       throw new NotFoundException(`Domain with ID ${domainId} not found`);
     }
@@ -186,24 +209,29 @@ export class UserDomainsService {
    * Validates that both user and domain exist
    * @throws NotFoundException with combined error message if either doesn't exist
    */
-  private async validateUserAndDomainExist(userId: number, domainId: number): Promise<void> {
+  private async validateUserAndDomainExist(
+    userId: number,
+    domainId: number,
+  ): Promise<void> {
     // Check both in parallel for better performance
     const [user, domain] = await Promise.all([
-      this.userRepo.findOne({ where: { user_id: userId, deleted_on: IsNull() } }),
-      this.domainRepo.findOne({ where: { id: domainId } })
+      this.userRepo.findOne({
+        where: { user_id: userId, deleted_on: IsNull() },
+      }),
+      this.domainRepo.findOne({ where: { id: domainId } }),
     ]);
-    
+
     // Build comprehensive error message
     const errors: string[] = [];
-    
+
     if (!user) {
       errors.push(`User with ID ${userId} not found`);
     }
-    
+
     if (!domain) {
       errors.push(`Domain with ID ${domainId} not found`);
     }
-    
+
     // If either resource doesn't exist, throw error with all details
     if (errors.length > 0) {
       throw new NotFoundException(errors.join('. '));

@@ -4,4 +4,3 @@ export class ModuleResponseDto {
   desc: string;
   domainId: number;
 }
-

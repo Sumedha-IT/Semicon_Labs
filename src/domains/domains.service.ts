@@ -1,4 +1,8 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, ILike, FindManyOptions } from 'typeorm';
 import { Domain } from './entities/domain.entity';
@@ -38,11 +42,11 @@ export class DomainsService {
    */
   async findOne(id: number): Promise<Domain> {
     const domain = await this.domainRepo.findOne({ where: { id } });
-    
+
     if (!domain) {
       throw new NotFoundException(`Domain with ID ${id} not found`);
     }
-    
+
     return domain;
   }
 
@@ -53,12 +57,12 @@ export class DomainsService {
   async update(id: number, dto: UpdateDomainDto): Promise<Domain> {
     // Validate domain exists
     const domain = await this.findOne(id);
-    
+
     // If name is being changed, validate new name is unique
     if (dto.name && dto.name !== domain.name) {
       await this.validateDomainNameUnique(dto.name);
     }
-    
+
     Object.assign(domain, dto);
     return this.domainRepo.save(domain);
   }
@@ -70,7 +74,7 @@ export class DomainsService {
    */
   async remove(id: number): Promise<void> {
     const result = await this.domainRepo.delete(id);
-    
+
     if (result.affected === 0) {
       throw new NotFoundException(`Domain with ID ${id} not found`);
     }
@@ -89,15 +93,15 @@ export class DomainsService {
     const options: FindManyOptions<Domain> = {
       select: {
         id: true,
-        name: true
+        name: true,
       },
-      order: { name: 'ASC' }
+      order: { name: 'ASC' },
     };
-    
+
     if (search) {
       options.where = { name: ILike(`%${search}%`) };
     }
-    
+
     return this.domainRepo.find(options);
   }
 
@@ -115,9 +119,11 @@ export class DomainsService {
    */
   private async validateDomainNameUnique(name: string): Promise<void> {
     const existing = await this.domainRepo.findOne({ where: { name } });
-    
+
     if (existing) {
-      throw new BadRequestException(`Domain with name "${name}" already exists`);
+      throw new BadRequestException(
+        `Domain with name "${name}" already exists`,
+      );
     }
   }
 }

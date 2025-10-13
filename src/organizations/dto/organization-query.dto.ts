@@ -1,4 +1,13 @@
-import { IsInt, IsOptional, IsIn, IsString, IsDateString, Min, Max, IsNumber } from 'class-validator';
+import {
+  IsInt,
+  IsOptional,
+  IsIn,
+  IsString,
+  IsDateString,
+  Min,
+  Max,
+  IsNumber,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class OrganizationQueryDto {
@@ -25,12 +34,31 @@ export class OrganizationQueryDto {
 
   @IsOptional()
   @IsString()
-  @IsIn(['semicon', 'corporate', 'startup', 'university', 'government', 'other'])
+  @IsIn([
+    'semicon',
+    'corporate',
+    'startup',
+    'university',
+    'government',
+    'other',
+  ])
   type?: string;
 
   @IsOptional()
   @IsString()
-  @IsIn(['IT', 'Telecom', 'Healthcare', 'Finance', 'Education', 'Manufacturing', 'Retail', 'Automotive', 'Energy', 'Agriculture', 'Other'])
+  @IsIn([
+    'IT',
+    'Telecom',
+    'Healthcare',
+    'Finance',
+    'Education',
+    'Manufacturing',
+    'Retail',
+    'Automotive',
+    'Energy',
+    'Agriculture',
+    'Other',
+  ])
   industry?: string;
 
   @IsOptional()
