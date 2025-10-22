@@ -1,5 +1,5 @@
 import { IsOptional, IsIn } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import { BaseQueryDto } from '../../common/dto/base-query.dto';
 
 /**
@@ -12,6 +12,11 @@ export class ModuleQueryDto extends BaseQueryDto {
   domainId?: number;
 
   @IsOptional()
+  @Transform(({ value }) => {
+    if (!value) return value;
+    // Capitalize first letter: beginner -> Beginner
+    return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+  })
   @IsIn(['Beginner', 'Intermediate', 'Advanced'], {
     message: 'Level must be Beginner, Intermediate, or Advanced',
   })

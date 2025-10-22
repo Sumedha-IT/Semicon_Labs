@@ -4,6 +4,8 @@ import { Repository, IsNull } from 'typeorm';
 import { UserDomain } from './entities/user-domain.entity';
 import { Domain } from '../domains/entities/domain.entity';
 import { User } from '../users/entities/user.entity';
+import { UserDomainQueryDto } from './dto/user-domain.dto';
+import { QueryBuilderHelper } from '../common/utils/query-builder.helper';
 
 @Injectable()
 export class UserDomainsService {
@@ -147,36 +149,62 @@ export class UserDomainsService {
   // ----------------------------------------------------------------------------
 
   /**
-   * Lists all domains assigned to a user
-   * Returns all domain fields including timestamps
+   * Lists all domains assigned to a user with pagination, search, and sorting
+   * Returns paginated domain fields including timestamps
    */
-  async listUserDomains(userId: number): Promise<
-    Array<{
-      id: number;
-      name: string;
-      description: string | null;
-      created_on: Date;
-      updated_on: Date;
-    }>
-  > {
+  async listUserDomains(userId: number, queryDto: UserDomainQueryDto) {
     // Validate user exists
     await this.validateUserExists(userId);
 
-    // Use entity objects with relations
-    const userDomains = await this.repo.find({
-      where: { user_id: userId },
-      relations: { domain: true },
-      order: { domain: { name: 'ASC' } },
-    });
+    const {
+      page = 1,
+      limit = 10,
+      search,
+      sortBy = 'name',
+      sortOrder = 'asc',
+    } = queryDto;
 
-    // Map to response format with all fields
-    return userDomains.map((ud) => ({
-      id: ud.domain.id,
-      name: ud.domain.name,
-      description: ud.domain.description ?? null,
-      created_on: ud.domain.created_on,
-      updated_on: ud.domain.updated_on,
-    }));
+    // Build query with join to domain
+    const queryBuilder = this.repo
+      .createQueryBuilder('ud')
+      .innerJoinAndSelect('ud.domain', 'd')
+      .where('ud.user_id = :userId', { userId });
+
+    // Apply search filter on domain fields
+    if (search) {
+      QueryBuilderHelper.applySearch(queryBuilder, 'd', ['name', 'description'], search);
+    }
+
+    // Map camelCase to database column names
+    const columnMap: Record<string, string> = {
+      name: 'name',
+      createdOn: 'created_on',
+    };
+
+    // Apply sorting
+    QueryBuilderHelper.applySorting(
+      queryBuilder,
+      'd',
+      columnMap,
+      sortBy,
+      sortOrder.toUpperCase() as 'ASC' | 'DESC',
+      'name',
+    );
+
+    // Apply pagination
+    const result = await QueryBuilderHelper.paginate(queryBuilder, page, limit);
+
+    // Transform the data to return domain fields
+    return {
+      ...result,
+      data: result.data.map((ud: UserDomain) => ({
+        id: ud.domain.id,
+        name: ud.domain.name,
+        description: ud.domain.description ?? null,
+        created_on: ud.domain.created_on,
+        updated_on: ud.domain.updated_on,
+      })),
+    };
   }
 
   // ============================================================================

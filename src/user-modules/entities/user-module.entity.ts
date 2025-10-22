@@ -1,13 +1,13 @@
 import { Entity, Column, ManyToOne, JoinColumn, Index } from 'typeorm';
 import { ProgressBaseEntity } from '../../common/entities/progress-base.entity';
-import { User } from '../../users/entities/user.entity';
+import { UserDomain } from '../../user-domains/entities/user-domain.entity';
 import { Module } from '../../modules/entities/module.entity';
 
 @Entity({ name: 'user_modules' })
-@Index(['user_id', 'module_id'], { unique: true })
+@Index(['user_domain_id', 'module_id'], { unique: true })
 export class UserModule extends ProgressBaseEntity {
   @Column({ type: 'int' })
-  user_id: number;
+  user_domain_id: number;
 
   @Column({ type: 'int' })
   module_id: number;
@@ -27,9 +27,9 @@ export class UserModule extends ProgressBaseEntity {
   @Column({ name: 'completed_on', type: 'timestamptz', nullable: true })
   completed_on: Date | null;
 
-  @ManyToOne(() => User, { nullable: false, onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'user_id' })
-  user: User;
+  @ManyToOne(() => UserDomain, { nullable: false, onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'user_domain_id' })
+  userDomain: UserDomain;
 
   @ManyToOne(() => Module, { nullable: false, onDelete: 'CASCADE' })
   @JoinColumn({ name: 'module_id' })

@@ -26,8 +26,6 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { CreateIndividualUserDto } from './dto/create-individual-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { Public } from '../common/decorator/public.decorator';
-import { UserDomainsService } from '../user-domains/user-domains.service';
-import { LinkUserToDomainsDto } from '../user-domains/dto/user-domain.dto';
 import {
   EnrollModuleDto,
   UserModuleQueryDto,
@@ -39,17 +37,31 @@ import {
 export class UsersV1Controller {
   constructor(
     private readonly usersService: UsersService,
-    private readonly userDomainsService: UserDomainsService,
     private readonly userModulesService: UserModulesService,
   ) {}
 
   // Universal registration endpoint
   // Public for individual learners (org_id not provided or null)
   // Requires authentication for organizational users (org_id provided)
+  // Special case: Allows creating the first Platform Admin without authentication
   @Public()
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   async register(@Body() createUserDto: CreateUserDto) {
+    // Special case: Allow creating the first Platform Admin without authentication
+    if (createUserDto.role === UserRole.PLATFORM_ADMIN) {
+      // Check if any Platform Admin already exists
+      const existingPlatformAdmin = await this.usersService.findPlatformAdmin();
+      if (existingPlatformAdmin) {
+        throw new BadRequestException(
+          'Cannot create Platform Admin through public registration: A Platform Admin already exists. Use authenticated endpoint instead.',
+        );
+      }
+      // Allow creation of the first Platform Admin
+      const user = await this.usersService.create(createUserDto);
+      return { id: user.id };
+    }
+
     // If no org_id provided or org_id is null, treat as individual learner registration
     if (!createUserDto.org_id) {
       // Force individual learner fields
@@ -396,157 +408,10 @@ export class UsersV1Controller {
     });
   }
 
-  // Domain linking endpoints (v1)
-  @Post(':id/domains')
-  @Roles(UserRole.PLATFORM_ADMIN)
-  @HttpCode(HttpStatus.OK)
-  async linkDomains(
-    @Param('id') id: string,
-    @Body() body: LinkUserToDomainsDto,
-  ) {
-    const userId = parseInt(id, 10);
-
-    if (isNaN(userId)) {
-      throw new BadRequestException('Invalid user ID');
-    }
-
-    // This will throw NotFoundException if user doesn't exist
-    const result = await this.userDomainsService.link(userId, body.domainIds);
-
-    // Calculate unique domain IDs from request
-    const uniqueRequestedIds = [...new Set(body.domainIds)];
-
-    // If there are invalid domains, return error with complete information
-    if (result.invalid.length > 0) {
-      const errorMessages: string[] = [];
-      errorMessages.push(
-        `Invalid domain(s) - do not exist: [${result.invalid.join(', ')}]`,
-      );
-
-      if (result.duplicates && result.duplicates.length > 0) {
-        errorMessages.push(
-          `Duplicate domain IDs found in request: [${[...new Set(result.duplicates)].join(', ')}]`,
-        );
-      }
-
-      if (result.skipped.length > 0) {
-        errorMessages.push(
-          `Domain(s) already linked to user ${userId}: [${result.skipped.join(', ')}]`,
-        );
-      }
-
-      if (result.linked.length > 0) {
-        errorMessages.push(
-          `Successfully linked ${result.linked.length} domain(s): [${result.linked.join(', ')}]`,
-        );
-      }
-
-      throw new BadRequestException({
-        message: errorMessages.join('. '),
-        invalidDomains: result.invalid,
-        duplicateDomains: result.duplicates
-          ? [...new Set(result.duplicates)]
-          : undefined,
-        alreadyLinked: result.skipped,
-        successfullyLinked: result.linked,
-        validationError: true,
-      });
-    }
-
-    // Build detailed message for successful operations
-    let message = '';
-    const messages: string[] = [];
-
-    if (result.linked.length > 0) {
-      messages.push(
-        `Successfully linked ${result.linked.length} domain(s): [${result.linked.join(', ')}]`,
-      );
-    }
-
-    if (result.skipped.length > 0) {
-      messages.push(
-        `Skipped ${result.skipped.length} domain(s) - already linked to user ${userId}: [${result.skipped.join(', ')}]`,
-      );
-    }
-
-    if (result.duplicates && result.duplicates.length > 0) {
-      messages.push(
-        `Note: ${result.duplicates.length} duplicate ID(s) were removed from request: [${[...new Set(result.duplicates)].join(', ')}]`,
-      );
-    }
-
-    message = messages.join('. ');
-
-    return {
-      success: true,
-      message,
-      userId,
-      linked: result.linked,
-      skipped: result.skipped,
-      duplicates: result.duplicates
-        ? [...new Set(result.duplicates)]
-        : undefined,
-      totalRequested: body.domainIds.length,
-      totalUnique: uniqueRequestedIds.length,
-      totalLinked: result.linked.length,
-      totalSkipped: result.skipped.length,
-    };
-  }
-
-  @Get(':id/domains')
-  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER)
-  async listUserDomains(@Param('id') id: string, @Res() res: Response) {
-    const userId = parseInt(id, 10);
-
-    if (isNaN(userId)) {
-      throw new BadRequestException('Invalid user ID');
-    }
-
-    // This will throw NotFoundException if user doesn't exist
-    const domains = await this.userDomainsService.listUserDomains(userId);
-
-    // Return 204 No Content if no domains linked
-    if (domains.length === 0) {
-      return res.status(HttpStatus.NO_CONTENT).send();
-    }
-
-    return res.status(HttpStatus.OK).json(domains);
-  }
-
-  @Delete(':id/domains/:domainId')
-  @Roles(UserRole.PLATFORM_ADMIN)
-  @HttpCode(HttpStatus.OK)
-  async unlinkDomain(
-    @Param('id') id: string,
-    @Param('domainId') domainId: string,
-  ) {
-    const userId = parseInt(id, 10);
-    const did = parseInt(domainId, 10);
-
-    if (isNaN(userId)) {
-      throw new BadRequestException('Invalid user ID');
-    }
-
-    if (isNaN(did)) {
-      throw new BadRequestException('Invalid domain ID');
-    }
-
-    // This will throw NotFoundException if user doesn't exist
-    const result = await this.userDomainsService.unlink(userId, did);
-
-    if (!result.success) {
-      throw new BadRequestException(result.message);
-    }
-
-    return {
-      success: true,
-      message: result.message,
-    };
-  }
 
   // User-centric module operations
 
-  // Enroll user in a module - both IDs in URL (no request body needed)
+  // Enroll user in a module - both IDs in URL, optional domainId in query or body
   @Post(':id/modules/:moduleId/enroll')
   @Roles(
     UserRole.PLATFORM_ADMIN,
@@ -558,7 +423,8 @@ export class UsersV1Controller {
   async enrollInModule(
     @Param('id') id: string,
     @Param('moduleId') moduleId: string,
-    @Body() body: any, // Accept empty body to prevent JSON parsing errors
+    @Query('domainId') domainIdQuery: string,
+    @Body() body: any, // Accept body with optional domainId
     @Request() req,
   ) {
     const userId = parseInt(id, 10);
@@ -574,7 +440,21 @@ export class UsersV1Controller {
       );
     }
 
-    return this.userModulesService.enroll(userId, { moduleId: modId });
+    // Get domainId from query param or body (query takes precedence)
+    let domainId: number | undefined;
+    if (domainIdQuery) {
+      domainId = parseInt(domainIdQuery, 10);
+      if (isNaN(domainId)) {
+        throw new BadRequestException('Invalid domain ID in query parameter');
+      }
+    } else if (body?.domainId) {
+      domainId = parseInt(body.domainId, 10);
+      if (isNaN(domainId)) {
+        throw new BadRequestException('Invalid domain ID in request body');
+      }
+    }
+
+    return this.userModulesService.enroll(userId, { moduleId: modId, domainId });
   }
 
   @Get(':id/modules/:moduleId')
@@ -587,13 +467,23 @@ export class UsersV1Controller {
   async getUserModule(
     @Param('id') id: string,
     @Param('moduleId') moduleId: string,
+    @Query('domainId') domainIdQuery: string,
   ) {
     const userId = parseInt(id, 10);
     const modId = parseInt(moduleId, 10);
     if (isNaN(userId) || isNaN(modId)) {
       throw new BadRequestException('Invalid user ID or module ID');
     }
-    return this.userModulesService.getUserModule(userId, modId);
+
+    let domainId: number | undefined;
+    if (domainIdQuery) {
+      domainId = parseInt(domainIdQuery, 10);
+      if (isNaN(domainId)) {
+        throw new BadRequestException('Invalid domain ID');
+      }
+    }
+
+    return this.userModulesService.getUserModule(userId, modId, domainId);
   }
 
   // Get user's modules with flexible filtering
@@ -644,6 +534,7 @@ export class UsersV1Controller {
   async updateUserModule(
     @Param('id') id: string,
     @Param('moduleId') moduleId: string,
+    @Query('domainId') domainIdQuery: string,
     @Body() updateDto: UpdateUserModuleDto,
   ) {
     const userId = parseInt(id, 10);
@@ -651,7 +542,16 @@ export class UsersV1Controller {
     if (isNaN(userId) || isNaN(modId)) {
       throw new BadRequestException('Invalid user ID or module ID');
     }
-    return this.userModulesService.updateUserModule(userId, modId, updateDto);
+
+    let domainId: number | undefined;
+    if (domainIdQuery) {
+      domainId = parseInt(domainIdQuery, 10);
+      if (isNaN(domainId)) {
+        throw new BadRequestException('Invalid domain ID');
+      }
+    }
+
+    return this.userModulesService.updateUserModule(userId, modId, updateDto, domainId);
   }
 
   @Delete(':id/modules/:moduleId/enroll')
@@ -660,12 +560,22 @@ export class UsersV1Controller {
   async unenrollFromModule(
     @Param('id') id: string,
     @Param('moduleId') moduleId: string,
+    @Query('domainId') domainIdQuery: string,
   ) {
     const userId = parseInt(id, 10);
     const modId = parseInt(moduleId, 10);
     if (isNaN(userId) || isNaN(modId)) {
       throw new BadRequestException('Invalid user ID or module ID');
     }
-    return this.userModulesService.unenrollByUserAndModule(userId, modId);
+
+    let domainId: number | undefined;
+    if (domainIdQuery) {
+      domainId = parseInt(domainIdQuery, 10);
+      if (isNaN(domainId)) {
+        throw new BadRequestException('Invalid domain ID');
+      }
+    }
+
+    return this.userModulesService.unenrollByUserAndModule(userId, modId, domainId);
   }
 }

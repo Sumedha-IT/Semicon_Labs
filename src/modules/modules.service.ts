@@ -36,20 +36,10 @@ export class ModulesService {
   // ----------------------------------------------------------------------------
 
   /**
-   * Creates a new module and links it to multiple domains
-   * Validates all domains exist
+   * Creates a new module
+   * Domain linking should be done separately via domain-modules endpoints
    */
   async create(createModuleDto: CreateModuleDto) {
-    const { domainIds, ...moduleData } = createModuleDto;
-
-    // Validate all domains exist
-    const invalidDomains = await this.validateDomainsExist(domainIds);
-    if (invalidDomains.length > 0) {
-      throw new BadRequestException(
-        `Domains not found: ${invalidDomains.join(', ')}`,
-      );
-    }
-
     // Check if module with same title already exists
     const existingModule = await this.moduleRepository.findOne({
       where: { title: createModuleDto.title },
@@ -62,20 +52,8 @@ export class ModulesService {
     }
 
     // Create the module
-    const module = this.moduleRepository.create(moduleData);
-    const saved = await this.moduleRepository.save(module);
-
-    // Link module to domains
-    const domainLinks = domainIds.map((domainId) =>
-      this.domainModuleRepository.create({
-        module_id: saved.id,
-        domain_id: domainId,
-      }),
-    );
-    await this.domainModuleRepository.save(domainLinks);
-
-    // Return module with domain info
-    return this.findOne(saved.id);
+    const module = this.moduleRepository.create(createModuleDto);
+    return await this.moduleRepository.save(module);
   }
 
   /**

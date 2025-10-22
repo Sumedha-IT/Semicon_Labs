@@ -17,6 +17,11 @@ export class EnrollModuleDto {
   @Type(() => Number)
   @IsNumber({}, { message: 'moduleId must be a valid number' })
   moduleId: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({}, { message: 'domainId must be a valid number' })
+  domainId?: number; // Optional - will auto-detect if not provided
 }
 
 export class EnrollUserDto {

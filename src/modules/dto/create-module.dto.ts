@@ -4,12 +4,9 @@ import {
   IsNotEmpty,
   MaxLength,
   IsIn,
-  IsInt,
-  IsPositive,
   IsOptional,
-  IsArray,
-  ArrayMinSize,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export class CreateModuleDto {
   @IsString()
@@ -27,12 +24,11 @@ export class CreateModuleDto {
 
   @IsOptional()
   @IsString()
+  @Transform(({ value }) => {
+    if (!value) return value;
+    // Capitalize first letter: beginner -> Beginner
+    return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+  })
   @IsIn(['Beginner', 'Intermediate', 'Advanced'])
   level?: string;
-
-  @IsArray()
-  @ArrayMinSize(1, { message: 'At least one domain must be provided' })
-  @IsInt({ each: true, message: 'Each domain ID must be an integer' })
-  @IsPositive({ each: true, message: 'Each domain ID must be positive' })
-  domainIds: number[]; // Array of domain IDs that this module belongs to
 }

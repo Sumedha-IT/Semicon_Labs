@@ -2,6 +2,7 @@ import {
   Injectable,
   BadRequestException,
   NotFoundException,
+  ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, ILike } from 'typeorm';
@@ -141,15 +142,17 @@ export class DomainsService {
   // ----------------------------------------------------------------------------
 
   /**
-   * Validates that a domain name is unique
-   * @throws BadRequestException if domain name already exists
+   * Validates that a domain name is unique (case-insensitive)
+   * @throws ConflictException if domain name already exists
    */
   private async validateDomainNameUnique(name: string): Promise<void> {
-    const existing = await this.domainRepo.findOne({ where: { name } });
+    const existing = await this.domainRepo.findOne({ 
+      where: { name: ILike(name) } 
+    });
 
     if (existing) {
-      throw new BadRequestException(
-        `Domain with name "${name}" already exists`,
+      throw new ConflictException(
+        `Domain with name "${name}" already exists (case-insensitive)`,
       );
     }
   }

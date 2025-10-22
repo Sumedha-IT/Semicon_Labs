@@ -33,8 +33,9 @@ export class ModuleUsersService {
 
     const queryBuilder = this.userModuleRepository
       .createQueryBuilder('um')
-      .innerJoin('users', 'u', 'u.id = um.user_id')
-      .innerJoin('modules', 'm', 'm.id = um.module_id')
+      .innerJoin('um.userDomain', 'ud')
+      .innerJoin('ud.user', 'u')
+      .innerJoin('um.module', 'm')
       .where('um.module_id = :moduleId', { moduleId })
       .andWhere('u.deleted_on IS NULL'); // Only active users
 
@@ -65,7 +66,8 @@ export class ModuleUsersService {
     // Select fields
     queryBuilder.select([
       'um.id AS id',
-      'um.user_id AS user_id',
+      'um.user_domain_id AS user_domain_id',
+      'ud.user_id AS user_id',
       'u.name AS user_name',
       'u.email AS user_email',
       'um.score AS score',

@@ -114,14 +114,14 @@ export class UsersController {
   @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER)
   async listUserDomains(@Param('id') id: string, @Res() res: Response) {
     const userId = parseInt(id, 10);
-    const domains = await this.userDomainsService.listUserDomains(userId);
+    const result = await this.userDomainsService.listUserDomains(userId, { page: 1, limit: 1000 });
 
     // Return 204 No Content if no domains linked
-    if (domains.length === 0) {
+    if (result.data.length === 0) {
       return res.status(HttpStatus.NO_CONTENT).send();
     }
 
-    return res.status(HttpStatus.OK).json(domains);
+    return res.status(HttpStatus.OK).json(result);
   }
 
   @Delete(':id/domains/:domainId')

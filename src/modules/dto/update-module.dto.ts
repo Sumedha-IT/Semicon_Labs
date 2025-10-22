@@ -6,6 +6,7 @@ import {
   IsIn,
   IsNotEmpty,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export class UpdateModuleDto {
   @IsOptional()
@@ -23,6 +24,11 @@ export class UpdateModuleDto {
 
   @IsOptional()
   @IsString()
+  @Transform(({ value }) => {
+    if (!value) return value;
+    // Capitalize first letter: beginner -> Beginner
+    return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+  })
   @IsIn(['Beginner', 'Intermediate', 'Advanced'])
   level?: string;
 

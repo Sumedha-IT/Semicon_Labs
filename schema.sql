@@ -76,9 +76,10 @@ CREATE TABLE user_domains (
 );
 
 -- Create User-Modules join table for progress tracking
+-- Uses user_domain_id to enforce domain access and provide clear context
 CREATE TABLE user_modules (
     id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_domain_id INTEGER NOT NULL REFERENCES user_domains(id) ON DELETE CASCADE,
     module_id INTEGER NOT NULL REFERENCES modules(id) ON DELETE CASCADE,
     questions_answered INTEGER DEFAULT 0,
     score NUMERIC(5,2) DEFAULT 0,
@@ -87,7 +88,7 @@ CREATE TABLE user_modules (
     joined_on TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_on TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(), -- Tracks when progress is updated
     completed_on TIMESTAMP WITH TIME ZONE NULL,
-    CONSTRAINT uq_user_module UNIQUE (user_id, module_id)
+    CONSTRAINT uq_user_domain_module UNIQUE (user_domain_id, module_id)
 );
 
 -- Create Topics table
@@ -175,7 +176,7 @@ CREATE INDEX idx_domain_modules_domain_id ON domain_modules (domain_id);
 CREATE INDEX idx_domain_modules_module_id ON domain_modules (module_id);
 
 -- User-Modules table indexes
-CREATE INDEX idx_user_modules_user_id ON user_modules (user_id);
+CREATE INDEX idx_user_modules_user_domain_id ON user_modules (user_domain_id);
 CREATE INDEX idx_user_modules_module_id ON user_modules (module_id);
 CREATE INDEX idx_user_modules_status ON user_modules (status);
 

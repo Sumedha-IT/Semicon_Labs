@@ -149,6 +149,15 @@ export class UsersService {
   }
 
   /**
+   * Finds the Platform Admin user (only non-deleted)
+   */
+  async findPlatformAdmin(): Promise<User | null> {
+    return this.usersRepository.findOne({
+      where: { role: UserRole.PLATFORM_ADMIN, deleted_on: IsNull() },
+    });
+  }
+
+  /**
    * Updates a user's information
    * Validates email uniqueness and role change restrictions
    */
@@ -261,10 +270,11 @@ export class UsersService {
     // Check if user exists and is not deleted
     const userActive = await this.findOne(id);
 
-    // Check user domains
-    const userDomains = await this.userDomainsService
-      .listUserDomains(id)
-      .catch(() => []);
+    // Check user domains - get all without pagination for validation
+    const userDomainsResult = await this.userDomainsService
+      .listUserDomains(id, { page: 1, limit: 1000 })
+      .catch(() => ({ data: [] }));
+    const userDomains = userDomainsResult.data || [];
 
     return {
       userId: id,
@@ -1105,7 +1115,8 @@ export class UsersService {
     context: string = '',
   ): Promise<void> {
     try {
-      const userDomains = await this.userDomainsService.listUserDomains(userId);
+      const result = await this.userDomainsService.listUserDomains(userId, { page: 1, limit: 1000 });
+      const userDomains = result.data || [];
       if (userDomains.length > 0) {
         for (const domain of userDomains) {
           await this.userDomainsService.unlink(userId, domain.id);
