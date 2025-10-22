@@ -1,29 +1,16 @@
-import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  CreateDateColumn,
-  ManyToOne,
-  JoinColumn,
-  Index,
-} from 'typeorm';
+import { Entity, Column, ManyToOne, JoinColumn, Index } from 'typeorm';
+import { BaseEntity } from '../../common/entities/base.entity';
 import { Domain } from '../../domains/entities/domain.entity';
-import { Module } from './module.entity';
+import { Module } from '../../modules/entities/module.entity';
 
 @Entity({ name: 'domain_modules' })
 @Index(['domain_id', 'module_id'], { unique: true }) // Prevent duplicate domain-module pairs
-export class DomainModule {
-  @PrimaryGeneratedColumn({ name: 'id' })
-  id: number;
-
+export class DomainModule extends BaseEntity {
   @Column({ name: 'domain_id', nullable: false })
   domain_id: number;
 
   @Column({ name: 'module_id', nullable: false })
   module_id: number;
-
-  @CreateDateColumn({ name: 'created_on', type: 'timestamptz' })
-  created_on: Date;
 
   @ManyToOne(() => Domain, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'domain_id' })
@@ -33,3 +20,4 @@ export class DomainModule {
   @JoinColumn({ name: 'module_id' })
   module: Module;
 }
+

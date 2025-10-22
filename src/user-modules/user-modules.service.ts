@@ -3,6 +3,8 @@ import {
   NotFoundException,
   ConflictException,
   ForbiddenException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, IsNull } from 'typeorm';
@@ -15,6 +17,7 @@ import {
   UpdateUserModuleDto,
   UserModuleQueryDto,
 } from './dto/user-module.dto';
+import { UserTopicsService } from '../user-topics/user-topics.service';
 
 @Injectable()
 export class UserModulesService {
@@ -27,6 +30,8 @@ export class UserModulesService {
     private moduleRepository: Repository<Module>,
     @InjectRepository(UserDomain)
     private userDomainRepository: Repository<UserDomain>,
+    @Inject(forwardRef(() => UserTopicsService))
+    private userTopicsService: UserTopicsService,
   ) {}
 
   // ============================================================================
@@ -42,12 +47,12 @@ export class UserModulesService {
    * Validates user access through domain assignments
    */
   async enroll(userId: number, enrollDto: EnrollModuleDto) {
-    const { module_id } = enrollDto;
+    const { moduleId } = enrollDto;
 
-    // Validate module_id
-    if (!module_id || module_id === null || module_id === undefined) {
+    // Validate moduleId
+    if (!moduleId || moduleId === null || moduleId === undefined) {
       throw new ConflictException(
-        'module_id is required and must be a valid number',
+        'moduleId is required and must be a valid number',
       );
     }
 
@@ -55,14 +60,14 @@ export class UserModulesService {
     await this.validateUserExistsAndActive(userId);
 
     // Validate module exists
-    const module = await this.validateModuleExists(module_id);
+    const module = await this.validateModuleExists(moduleId);
 
     // Verify user has access through domain assignment
-    await this.validateUserHasModuleAccess(userId, module_id);
+    await this.validateUserHasModuleAccess(userId, moduleId);
 
     // Check if already enrolled
     const existingEnrollment = await this.userModuleRepository.findOne({
-      where: { user_id: userId, module_id },
+      where: { user_id: userId, module_id: moduleId },
     });
 
     if (existingEnrollment) {
@@ -72,14 +77,13 @@ export class UserModulesService {
       };
     }
 
-    // Create enrollment with threshold_score from module
+    // Create enrollment; threshold_score defaults in DB (70)
     const enrollment = this.userModuleRepository.create({
       user_id: userId,
-      module_id,
-      status: 'not_started',
+      module_id: moduleId,
+      status: 'todo',
       questions_answered: 0,
       score: 0,
-      threshold_score: module.threshold_score,
     });
 
     const saved = await this.userModuleRepository.save(enrollment);
@@ -107,6 +111,12 @@ export class UserModulesService {
     // Validate user exists and is active
     await this.validateUserExistsAndActive(enrollment.user_id);
 
+    // Cleanup topic assignments from this module
+    await this.userTopicsService.cleanupTopicsForModule(
+      enrollment.user_id,
+      enrollment.module_id,
+    );
+
     await this.userModuleRepository.remove(enrollment);
 
     return {
@@ -132,6 +142,9 @@ export class UserModulesService {
       );
     }
 
+    // Cleanup topic assignments from this module
+    await this.userTopicsService.cleanupTopicsForModule(userId, moduleId);
+
     await this.userModuleRepository.remove(enrollment);
 
     return {
@@ -145,37 +158,78 @@ export class UserModulesService {
   // ----------------------------------------------------------------------------
 
   /**
-   * Get all enrolled modules for a user with pagination
+   * Get modules for a user with pagination
+   * If enroll=false: returns available modules from user's domains (not yet enrolled)
+   * If enroll=true or undefined: returns enrolled modules (default behavior)
+   * Optional domain_id filter applies to both cases
    */
   async getUserModules(userId: number, queryDto: UserModuleQueryDto) {
-    const { page = 1, limit = 10, status, module_id } = queryDto;
+    const { page = 1, limit = 10, status, moduleId, enroll, domainId } = queryDto;
 
     // Validate user exists and is active
     await this.validateUserExistsAndActive(userId);
 
+    // If enroll=false (explicitly), return available modules from user's domains
+    if (enroll === false) {
+      return this.getAvailableModulesInternal(userId, page, limit, domainId);
+    }
+
+    // Default: return enrolled modules (if enroll=true or undefined)
     // Build where conditions
     const where: any = { user_id: userId };
     if (status) {
       where.status = status;
     }
-    if (module_id) {
-      where.module_id = module_id;
+    if (moduleId) {
+      where.module_id = moduleId;
     }
 
-    // Use entity objects with relations
-    const [enrollments, total] = await this.userModuleRepository.findAndCount({
-      where,
-      relations: {
-        module: {
-          domainModules: {
-            domain: true,
+    // Apply domainId filter if provided
+    let enrollments: UserModule[];
+    let total: number;
+
+    if (domainId) {
+      // Need to filter by domain - use query builder
+      const queryBuilder = this.userModuleRepository
+        .createQueryBuilder('um')
+        .leftJoinAndSelect('um.module', 'm')
+        .leftJoinAndSelect('m.domainModules', 'dm')
+        .leftJoinAndSelect('dm.domain', 'd')
+        .where('um.user_id = :userId', { userId })
+        .andWhere('dm.domain_id = :domainId', { domainId });
+
+      if (status) {
+        queryBuilder.andWhere('um.status = :status', { status });
+      }
+      if (moduleId) {
+        queryBuilder.andWhere('um.module_id = :moduleId', { moduleId });
+      }
+
+      queryBuilder
+        .orderBy('um.joined_on', 'DESC')
+        .skip((page - 1) * limit)
+        .take(limit);
+
+      enrollments = await queryBuilder.getMany();
+      
+      const countQuery = queryBuilder.clone();
+      total = await countQuery.getCount();
+    } else {
+      // No domain filter - use simpler find
+      [enrollments, total] = await this.userModuleRepository.findAndCount({
+        where,
+        relations: {
+          module: {
+            domainModules: {
+              domain: true,
+            },
           },
         },
-      },
-      order: { joined_on: 'DESC' },
-      skip: (page - 1) * limit,
-      take: limit,
-    });
+        order: { joined_on: 'DESC' },
+        skip: (page - 1) * limit,
+        take: limit,
+      });
+    }
 
     // Map to response format
     const data = enrollments.map((enrollment) => {
@@ -229,7 +283,7 @@ export class UserModulesService {
       );
     }
 
-    // Get first domain name (modules can belong to multiple domains)
+    // Get domain name (module belongs to one domain)
     const firstDomain = enrollment.module.domainModules[0]?.domain;
 
     return {
@@ -251,13 +305,24 @@ export class UserModulesService {
   /**
    * Get available modules (from user's domains) that user hasn't enrolled in yet
    * Modules that belong to at least one of the user's assigned domains
+   * @deprecated Use getUserModules with enroll=false instead
    */
   async getAvailableModules(userId: number, queryDto: UserModuleQueryDto) {
-    const { page = 1, limit = 10 } = queryDto;
-
-    // Validate user exists and is active
+    const { page = 1, limit = 10, domainId } = queryDto;
     await this.validateUserExistsAndActive(userId);
+    return this.getAvailableModulesInternal(userId, page, limit, domainId);
+  }
 
+  /**
+   * Internal method: Get available modules from user's domains (not enrolled yet)
+   * Can optionally filter by specific domainId
+   */
+  private async getAvailableModulesInternal(
+    userId: number,
+    page: number,
+    limit: number,
+    domainId?: number,
+  ) {
     // Get modules from user's domains that aren't enrolled yet
     const queryBuilder = this.moduleRepository
       .createQueryBuilder('m')
@@ -272,6 +337,11 @@ export class UserModulesService {
       )
       .where('ud.user_id = :userId', { userId })
       .andWhere('um.id IS NULL'); // Not enrolled yet
+
+    // Apply domain filter if provided
+    if (domainId) {
+      queryBuilder.andWhere('dm.domain_id = :domainId', { domainId });
+    }
 
     // Get count (distinct modules)
     const totalQuery = queryBuilder.clone();
@@ -362,17 +432,17 @@ export class UserModulesService {
    * Find all enrollments with filters (admin operation)
    */
   async findAllEnrollments(queryDto: UserModuleQueryDto) {
-    const { page = 1, limit = 10, status, module_id, user_id } = queryDto;
+    const { page = 1, limit = 10, status, moduleId, userId } = queryDto;
 
     // Build where conditions - filter deleted users at database level
     const where: any = {
       user: { deleted_on: IsNull() }  // Only include active users
     };
-    if (user_id) {
-      where.user_id = user_id;
+    if (userId) {
+      where.user_id = userId;
     }
-    if (module_id) {
-      where.module_id = module_id;
+    if (moduleId) {
+      where.module_id = moduleId;
     }
     if (status) {
       where.status = status;
@@ -529,13 +599,13 @@ export class UserModulesService {
    */
   private async validateUserExistsAndActive(userId: number): Promise<User> {
     const user = await this.userRepository.findOne({
-      where: { user_id: userId, deleted_on: IsNull() },
+      where: { id: userId, deleted_on: IsNull() },
     });
 
     if (!user) {
       // Check if user exists but is soft deleted
       const deletedUser = await this.userRepository.findOne({
-        where: { user_id: userId },
+        where: { id: userId },
       });
 
       if (deletedUser && deletedUser.deleted_on) {
@@ -601,43 +671,45 @@ export class UserModulesService {
     updateDto: UpdateUserModuleDto,
   ): void {
     // Update basic fields
-    if (updateDto.questions_answered !== undefined) {
-      enrollment.questions_answered = updateDto.questions_answered;
+    if (updateDto.questionsAnswered !== undefined) {
+      enrollment.questions_answered = updateDto.questionsAnswered;
     }
 
     if (updateDto.score !== undefined) {
       enrollment.score = updateDto.score;
     }
 
-    if (updateDto.threshold_score !== undefined) {
-      enrollment.threshold_score = updateDto.threshold_score;
+    if (updateDto.thresholdScore !== undefined) {
+      enrollment.threshold_score = updateDto.thresholdScore;
     }
 
     // Auto-update status based on score vs threshold
     if (updateDto.score !== undefined) {
       const finalScore = updateDto.score;
       const threshold =
-        updateDto.threshold_score !== undefined
-          ? updateDto.threshold_score
+        updateDto.thresholdScore !== undefined
+          ? updateDto.thresholdScore
           : enrollment.threshold_score;
 
       if (finalScore >= threshold) {
-        enrollment.status = 'passed';
+        // User passed - mark as completed
+        enrollment.status = 'completed';
         enrollment.completed_on = new Date();
       } else {
-        enrollment.status = 'failed';
-        enrollment.completed_on = new Date();
+        // User failed - keep in progress so they can retry
+        enrollment.status = 'inProgress';
+        enrollment.completed_on = null; // Clear completed timestamp
       }
     } else if (updateDto.status !== undefined) {
       // Allow manual status override
       enrollment.status = updateDto.status;
 
-      // Set completed_on timestamp if status is final
-      if (
-        ['completed', 'passed', 'failed'].includes(updateDto.status) &&
-        !enrollment.completed_on
-      ) {
+      // Set completed_on timestamp if status is completed
+      if (updateDto.status === 'completed' && !enrollment.completed_on) {
         enrollment.completed_on = new Date();
+      } else if (updateDto.status !== 'completed') {
+        // Clear completed_on if status is changed back to todo or inProgress
+        enrollment.completed_on = null;
       }
     }
   }

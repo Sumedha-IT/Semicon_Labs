@@ -3,9 +3,13 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { DomainsService } from './domains.service';
 import { DomainsController } from './domains.controller';
 import { Domain } from './entities/domain.entity';
+import { ChangelogModule } from '../changelog/changelog.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Domain])],
+  imports: [
+    TypeOrmModule.forFeature([Domain]),
+    ChangelogModule,
+  ],
   controllers: [DomainsController],
   providers: [DomainsService],
   exports: [DomainsService],

@@ -1,19 +1,9 @@
-import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  CreateDateColumn,
-  UpdateDateColumn,
-  Index,
-  OneToMany,
-} from 'typeorm';
-import { DomainModule } from '../../modules/entities/domain-module.entity';
+import { Entity, Column, Index, OneToMany } from 'typeorm';
+import { BaseEntity } from '../../common/entities/base.entity';
+import { DomainModule } from '../../domain-modules/entities/domain-module.entity';
 
 @Entity({ name: 'domains' })
-export class Domain {
-  @PrimaryGeneratedColumn()
-  id: number;
-
+export class Domain extends BaseEntity {
   @Index({ unique: true })
   @Column({ length: 100 })
   name: string;
@@ -21,12 +11,6 @@ export class Domain {
   @Column({ type: 'text', nullable: true })
   description?: string | null;
 
-  @CreateDateColumn({ name: 'created_on', type: 'timestamptz' })
-  created_on: Date;
-
-  @UpdateDateColumn({ name: 'updated_on', type: 'timestamptz' })
-  updated_on: Date;
-
-  @OneToMany(() => DomainModule, (domainModule) => domainModule.domain)
+  @OneToMany(() => DomainModule, (dm: DomainModule) => dm.domain)
   domainModules: DomainModule[];
 }

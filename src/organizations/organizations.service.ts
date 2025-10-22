@@ -15,6 +15,7 @@ import {
   PaginatedResponseDto,
   PaginationMetaDto,
 } from '../users/dto/paginated-response.dto';
+import { QueryBuilderHelper } from '../common/utils/query-builder.helper';
 
 @Injectable()
 export class OrganizationsService {
@@ -70,7 +71,7 @@ export class OrganizationsService {
    */
   async findOne(id: number): Promise<Organization | null> {
     return this.organizationsRepository.findOne({
-      where: { org_id: id, deleted_on: IsNull() },
+      where: { id: id, deleted_on: IsNull() },
     });
   }
 
@@ -158,7 +159,7 @@ export class OrganizationsService {
   ): Promise<PaginatedResponseDto<Organization>> {
     const qb = this.organizationsRepository
       .createQueryBuilder('org')
-      .select(['org.org_id', 'org.name'])
+      .select(['org.id', 'org.name'])
       .where('org.deleted_on IS NULL');
 
     // ClientAdmin can only see their org
@@ -166,27 +167,77 @@ export class OrganizationsService {
       requestingUser?.role === 'ClientAdmin' &&
       requestingUser?.orgId != null
     ) {
-      qb.andWhere('org.org_id = :orgId', { orgId: requestingUser.orgId });
+      qb.andWhere('org.id = :orgId', { orgId: requestingUser.orgId });
     }
 
-    // Apply filters
-    this.applyFilters(qb, queryDto);
+    // Apply filters using QueryBuilderHelper
+    QueryBuilderHelper.applyEqualityFilter(qb, 'org', 'type', queryDto.type);
+    QueryBuilderHelper.applyEqualityFilter(qb, 'org', 'industry', queryDto.industry);
+    QueryBuilderHelper.applyLikeFilter(qb, 'org', 'location', queryDto.location);
+    QueryBuilderHelper.applyEqualityFilter(qb, 'org', 'subscription_id', queryDto.subscriptionId);
+
+    // Apply date range filters
+    QueryBuilderHelper.applyDateRangeFilter(
+      qb,
+      'org',
+      'created_on',
+      queryDto.createdAfter,
+      queryDto.createdBefore,
+    );
+    QueryBuilderHelper.applyDateRangeFilter(
+      qb,
+      'org',
+      'updated_on',
+      queryDto.updatedAfter,
+      queryDto.updatedBefore,
+    );
+
+    // Apply search filter (name, POC name, or POC email)
+    if (queryDto.search) {
+      QueryBuilderHelper.applySearch(
+        qb,
+        'org',
+        ['name', 'poc_name', 'poc_email'],
+        queryDto.search,
+      );
+    }
 
     // Apply sorting
-    this.applySorting(qb, queryDto);
+    const columnMap = {
+      name: 'name',
+      createdOn: 'created_on',
+      updatedOn: 'updated_on',
+      location: 'location',
+      type: 'type',
+    };
+    QueryBuilderHelper.applySorting(
+      qb,
+      'org',
+      columnMap,
+      queryDto.sortBy,
+      queryDto.sortOrder,
+      'name',
+    );
 
     // Pagination
     const page = queryDto.page || 1;
     const limit = queryDto.limit || 20;
-    const skip = (page - 1) * limit;
-    const total = await qb.getCount();
-    qb.skip(skip).take(limit);
-    const data = await qb.getMany();
+    const result = await QueryBuilderHelper.paginate(qb, page, limit);
 
-    const pagination = new PaginationMetaDto(page, limit, total);
-    const appliedFilters = this.createAppliedFiltersObject(queryDto);
+    const pagination = new PaginationMetaDto(page, limit, result.total);
+    const appliedFilters = QueryBuilderHelper.buildAppliedFilters({
+      type: queryDto.type,
+      industry: queryDto.industry,
+      location: queryDto.location,
+      subscriptionId: queryDto.subscriptionId,
+      createdAfter: queryDto.createdAfter,
+      createdBefore: queryDto.createdBefore,
+      updatedAfter: queryDto.updatedAfter,
+      updatedBefore: queryDto.updatedBefore,
+      search: queryDto.search,
+    });
 
-    return new PaginatedResponseDto(data, pagination, appliedFilters);
+    return new PaginatedResponseDto(result.data, pagination, appliedFilters);
   }
 
   // ----------------------------------------------------------------------------
@@ -240,7 +291,7 @@ export class OrganizationsService {
 
     return {
       organization: {
-        org_id: organization.org_id,
+        id: organization.id,
         name: organization.name,
         type: organization.type,
         industry: organization.industry,
@@ -348,7 +399,7 @@ export class OrganizationsService {
     });
 
     // If found and it's not the organization being updated
-    if (existingOrg && (!excludeId || existingOrg.org_id !== excludeId)) {
+    if (existingOrg && (!excludeId || existingOrg.id !== excludeId)) {
       const fieldName = {
         name: 'name',
         poc_email: 'POC email',
@@ -385,124 +436,4 @@ export class OrganizationsService {
     }
   }
 
-  // ----------------------------------------------------------------------------
-  // Query Building Helpers (for findOrganizationsWithPagination)
-  // ----------------------------------------------------------------------------
-
-  /**
-   * Applies filters to a query builder based on query DTO
-   */
-  private applyFilters(
-    qb: SelectQueryBuilder<Organization>,
-    queryDto: OrganizationQueryDto,
-  ): void {
-    // Type filter
-    if (queryDto.type) {
-      qb.andWhere('org.type = :type', { type: queryDto.type });
-    }
-
-    // Industry filter
-    if (queryDto.industry) {
-      qb.andWhere('org.industry = :industry', { industry: queryDto.industry });
-    }
-
-    // Location filter
-    if (queryDto.location) {
-      qb.andWhere('org.location LIKE :location', {
-        location: `%${queryDto.location}%`,
-      });
-    }
-
-    // Subscription ID filter
-    if (queryDto.subscriptionId != null) {
-      qb.andWhere('org.subscription_id = :subscriptionId', {
-        subscriptionId: queryDto.subscriptionId,
-      });
-    }
-
-    // Created date range filters
-    if (queryDto.createdAfter || queryDto.createdBefore) {
-      if (queryDto.createdAfter && queryDto.createdBefore) {
-        qb.andWhere('org.created_on BETWEEN :ca AND :cb', {
-          ca: queryDto.createdAfter,
-          cb: queryDto.createdBefore,
-        });
-      } else if (queryDto.createdAfter) {
-        qb.andWhere('org.created_on >= :ca', { ca: queryDto.createdAfter });
-      } else if (queryDto.createdBefore) {
-        qb.andWhere('org.created_on <= :cb', { cb: queryDto.createdBefore });
-      }
-    }
-
-    // Updated date range filters
-    if (queryDto.updatedAfter || queryDto.updatedBefore) {
-      if (queryDto.updatedAfter && queryDto.updatedBefore) {
-        qb.andWhere('org.updated_on BETWEEN :ua AND :ub', {
-          ua: queryDto.updatedAfter,
-          ub: queryDto.updatedBefore,
-        });
-      } else if (queryDto.updatedAfter) {
-        qb.andWhere('org.updated_on >= :ua', { ua: queryDto.updatedAfter });
-      } else if (queryDto.updatedBefore) {
-        qb.andWhere('org.updated_on <= :ub', { ub: queryDto.updatedBefore });
-      }
-    }
-
-    // Search filter (name, POC name, or POC email)
-    if (queryDto.search) {
-      qb.andWhere(
-        '(org.name ILIKE :q OR org.poc_name ILIKE :q OR org.poc_email ILIKE :q)',
-        { q: `%${queryDto.search}%` },
-      );
-    }
-  }
-
-  /**
-   * Applies sorting to a query builder
-   */
-  private applySorting(
-    qb: SelectQueryBuilder<Organization>,
-    queryDto: OrganizationQueryDto,
-  ): void {
-    const sortBy = queryDto.sortBy || 'name';
-    const sortOrder = (queryDto.sortOrder || 'asc').toUpperCase() as
-      | 'ASC'
-      | 'DESC';
-
-    const columnMap: Record<string, string> = {
-      name: 'org.name',
-      created_on: 'org.created_on',
-      updated_on: 'org.updated_on',
-      location: 'org.location',
-      type: 'org.type',
-    };
-
-    qb.orderBy(columnMap[sortBy] || 'org.name', sortOrder);
-  }
-
-  /**
-   * Creates an object containing all applied filters from query DTO
-   */
-  private createAppliedFiltersObject(
-    queryDto: OrganizationQueryDto,
-  ): Record<string, any> {
-    const appliedFilters: Record<string, any> = {};
-
-    if (queryDto.type) appliedFilters.type = queryDto.type;
-    if (queryDto.industry) appliedFilters.industry = queryDto.industry;
-    if (queryDto.location) appliedFilters.location = queryDto.location;
-    if (queryDto.subscriptionId != null)
-      appliedFilters.subscriptionId = queryDto.subscriptionId;
-    if (queryDto.createdAfter)
-      appliedFilters.createdAfter = queryDto.createdAfter;
-    if (queryDto.createdBefore)
-      appliedFilters.createdBefore = queryDto.createdBefore;
-    if (queryDto.updatedAfter)
-      appliedFilters.updatedAfter = queryDto.updatedAfter;
-    if (queryDto.updatedBefore)
-      appliedFilters.updatedBefore = queryDto.updatedBefore;
-    if (queryDto.search) appliedFilters.search = queryDto.search;
-
-    return appliedFilters;
-  }
 }

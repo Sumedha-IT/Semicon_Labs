@@ -17,7 +17,7 @@ import {
 import { Response } from 'express';
 import { UsersService } from './users.service';
 import { UserDomainsService } from '../user-domains/user-domains.service';
-import { LinkUserToDomainsDto } from '../user-domains/dto/link-user-to-domains.dto';
+import { LinkUserToDomainsDto } from '../user-domains/dto/user-domain.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { CreateIndividualUserDto } from './dto/create-individual-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -49,7 +49,7 @@ export class UsersController {
       role: UserRole.LEARNER,
     };
     const user = await this.usersService.create(individualUserData);
-    return { user_id: user.user_id };
+    return { id: user.id };
   }
 
   // Public registration endpoint for testing (legacy)
@@ -63,7 +63,7 @@ export class UsersController {
       role: createUserDto.role || UserRole.LEARNER,
     };
     const user = await this.usersService.create(userWithRole);
-    return { user_id: user.user_id };
+    return { id: user.id };
   }
 
   @Post()
@@ -71,7 +71,7 @@ export class UsersController {
   @HttpCode(HttpStatus.CREATED)
   async create(@Body() createUserDto: CreateUserDto) {
     const user = await this.usersService.create(createUserDto);
-    return { user_id: user.user_id };
+    return { id: user.id };
   }
 
   // Get all users with comprehensive pagination and filtering
@@ -91,8 +91,8 @@ export class UsersController {
       req.user,
     );
 
-    // Return 204 No Content if no results found
-    if (result.pagination.total === 0) {
+    // Return 204 No Content if no data in response
+    if (result.data.length === 0) {
       return res.status(HttpStatus.NO_CONTENT).send();
     }
 
@@ -112,9 +112,16 @@ export class UsersController {
 
   @Get(':id/domains')
   @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER)
-  async listUserDomains(@Param('id') id: string) {
+  async listUserDomains(@Param('id') id: string, @Res() res: Response) {
     const userId = parseInt(id, 10);
-    return this.userDomainsService.listUserDomains(userId);
+    const domains = await this.userDomainsService.listUserDomains(userId);
+
+    // Return 204 No Content if no domains linked
+    if (domains.length === 0) {
+      return res.status(HttpStatus.NO_CONTENT).send();
+    }
+
+    return res.status(HttpStatus.OK).json(domains);
   }
 
   @Delete(':id/domains/:domainId')
@@ -152,7 +159,7 @@ export class UsersController {
 
     // Only PlatformAdmin can update any user across all organizations
     await this.usersService.update(userId, updateUserDto);
-    return { user_id: userId };
+    return { id: userId };
   }
 
   @Delete(':id')
@@ -234,7 +241,7 @@ export class UsersController {
       throw new BadRequestException('Invalid user ID');
     }
     await this.usersService.update(req.user.userId, updateUserDto);
-    return { user_id: req.user.userId };
+    return { id: req.user.userId };
   }
 
   // Password management

@@ -1,36 +1,31 @@
 import {
-  IsInt,
   IsOptional,
   IsIn,
   IsString,
   IsDateString,
-  Min,
+  IsInt,
   Max,
-  IsNumber,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { BaseQueryDto } from '../../common/dto/base-query.dto';
 
-export class OrganizationQueryDto {
+/**
+ * Organization Query DTO
+ * Extends BaseQueryDto with organization-specific filters and sorting options
+ */
+export class OrganizationQueryDto extends BaseQueryDto {
+  // Override limit with different max constraint
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  page?: number;
+  @Max(100, { message: 'Limit cannot exceed 100' })
+  limit?: number = 10;
 
+  // Organization-specific sorting
   @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(100)
-  limit?: number;
-
-  @IsOptional()
-  @IsString()
-  sortBy?: 'name' | 'created_on' | 'updated_on' | 'location' | 'type';
-
-  @IsOptional()
-  @IsIn(['asc', 'desc'])
-  sortOrder?: 'asc' | 'desc';
+  @IsIn(['name', 'createdOn', 'updatedOn', 'location', 'type'], {
+    message: 'Sort by must be name, createdOn, updatedOn, location, or type',
+  })
+  sortBy?: string = 'name';
 
   @IsOptional()
   @IsString()
@@ -86,7 +81,5 @@ export class OrganizationQueryDto {
   @IsDateString()
   updatedBefore?: string;
 
-  @IsOptional()
-  @IsString()
-  search?: string;
+  // search is inherited from BaseQueryDto
 }

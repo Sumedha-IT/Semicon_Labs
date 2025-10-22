@@ -5,7 +5,6 @@ import {
   Body,
   Patch,
   Param,
-  Delete,
   Query,
   HttpCode,
   HttpStatus,
@@ -16,9 +15,11 @@ import { Response } from 'express';
 import { DomainsService } from './domains.service';
 import { CreateDomainDto } from './dto/create-domain.dto';
 import { UpdateDomainDto } from './dto/update-domain.dto';
+import { DomainQueryDto } from './dto/domain-query.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorator/roles.decorator';
+import { GetUser } from '../common/decorator/get-user.decorator';
 import { UserRole } from '../common/constants/user-roles';
 
 @Controller({ path: 'domains', version: '1' })
@@ -35,15 +36,15 @@ export class DomainsController {
 
   @Get()
   @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER)
-  async findAll(@Res() res: Response, @Query('search') search?: string) {
-    const domains = await this.domainsService.findAll(search);
+  async findAll(@Query() query: DomainQueryDto, @Res() res: Response) {
+    const result = await this.domainsService.findAll(query);
 
-    // Return 204 No Content if no results found
-    if (domains.length === 0) {
+    // Return 204 No Content if no data in response
+    if (result.data.length === 0) {
       return res.status(HttpStatus.NO_CONTENT).send();
     }
 
-    return res.status(HttpStatus.OK).json(domains);
+    return res.status(HttpStatus.OK).json(result);
   }
 
   @Get(':id')
@@ -54,14 +55,17 @@ export class DomainsController {
 
   @Patch(':id')
   @Roles(UserRole.PLATFORM_ADMIN)
-  update(@Param('id') id: string, @Body() dto: UpdateDomainDto) {
-    return this.domainsService.update(+id, dto);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateDomainDto,
+    @GetUser('userId') userId: number,
+  ) {
+    return this.domainsService.update(+id, dto, userId);
   }
 
-  @Delete(':id')
-  @Roles(UserRole.PLATFORM_ADMIN)
-  @HttpCode(HttpStatus.NO_CONTENT)
-  async remove(@Param('id') id: string) {
-    await this.domainsService.remove(+id);
-  }
+  // Note: Domain deletion is not supported as domains are core entities
+  // that should not be removed once created
+
+  // Domain-module operations (GET, POST, DELETE /v1/domains/:id/modules)
+  // are handled by DomainModulesController to avoid routing conflicts
 }

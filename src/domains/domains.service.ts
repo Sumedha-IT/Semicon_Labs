@@ -4,16 +4,20 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, ILike, FindManyOptions } from 'typeorm';
+import { Repository, ILike } from 'typeorm';
 import { Domain } from './entities/domain.entity';
 import { CreateDomainDto } from './dto/create-domain.dto';
 import { UpdateDomainDto } from './dto/update-domain.dto';
+import { DomainQueryDto } from './dto/domain-query.dto';
+import { ChangelogService } from '../changelog/changelog.service';
+import { QueryBuilderHelper } from '../common/utils/query-builder.helper';
 
 @Injectable()
 export class DomainsService {
   constructor(
     @InjectRepository(Domain)
     private readonly domainRepo: Repository<Domain>,
+    private readonly changelogService: ChangelogService,
   ) {}
 
   // ============================================================================
@@ -53,31 +57,32 @@ export class DomainsService {
   /**
    * Updates a domain's information
    * Validates name uniqueness if name is being changed
+   * Creates a changelog entry after successful update
    */
-  async update(id: number, dto: UpdateDomainDto): Promise<Domain> {
+  async update(id: number, dto: UpdateDomainDto, userId: number): Promise<Domain> {
     // Validate domain exists
     const domain = await this.findOne(id);
 
+    // Extract reason for changelog (don't save it in domain)
+    const { reason, ...domainData } = dto;
+
     // If name is being changed, validate new name is unique
-    if (dto.name && dto.name !== domain.name) {
-      await this.validateDomainNameUnique(dto.name);
+    if (domainData.name && domainData.name !== domain.name) {
+      await this.validateDomainNameUnique(domainData.name);
     }
 
-    Object.assign(domain, dto);
-    return this.domainRepo.save(domain);
-  }
+    Object.assign(domain, domainData);
+    const updatedDomain = await this.domainRepo.save(domain);
 
-  /**
-   * Deletes a domain (hard delete)
-   * Note: Cascades to related modules due to FK constraint
-   * @throws NotFoundException if domain doesn't exist
-   */
-  async remove(id: number): Promise<void> {
-    const result = await this.domainRepo.delete(id);
+    // Create changelog entry
+    await this.changelogService.createLog({
+      changeType: 'domain',
+      changeTypeId: id,
+      userId: userId,
+      reason,
+    });
 
-    if (result.affected === 0) {
-      throw new NotFoundException(`Domain with ID ${id} not found`);
-    }
+    return updatedDomain;
   }
 
   // ----------------------------------------------------------------------------
@@ -85,25 +90,47 @@ export class DomainsService {
   // ----------------------------------------------------------------------------
 
   /**
-   * Finds all domains with optional search filter
-   * Returns domains sorted by name in ascending order
-   * @param search - Optional search term to filter domain names (case-insensitive)
+   * Finds all domains with pagination, search, and sorting
    */
-  async findAll(search?: string): Promise<Domain[]> {
-    const options: FindManyOptions<Domain> = {
-      select: {
-        id: true,
-        name: true,
-      },
-      order: { name: 'ASC' },
-    };
+  async findAll(queryDto: DomainQueryDto) {
+    const {
+      page = 1,
+      limit = 10,
+      search,
+      sortBy = 'name',
+      sortOrder = 'ASC',
+    } = queryDto;
 
+    const queryBuilder = this.domainRepo.createQueryBuilder('d');
+
+    // Apply search filter using QueryBuilderHelper
     if (search) {
-      options.where = { name: ILike(`%${search}%`) };
+      QueryBuilderHelper.applySearch(queryBuilder, 'd', ['name', 'description'], search);
     }
 
-    return this.domainRepo.find(options);
+    // Map camelCase to database column names
+    const columnMap: Record<string, string> = {
+      name: 'name',
+      createdOn: 'created_on',
+    };
+
+    // Apply sorting
+    QueryBuilderHelper.applySorting(
+      queryBuilder,
+      'd',
+      columnMap,
+      sortBy,
+      sortOrder,
+      'name',
+    );
+
+    // Apply pagination
+    const result = await QueryBuilderHelper.paginate(queryBuilder, page, limit);
+
+    return result;
   }
+
+  // Domain-module operations moved to DomainModulesService for clean architecture
 
   // ============================================================================
   // PRIVATE HELPER METHODS

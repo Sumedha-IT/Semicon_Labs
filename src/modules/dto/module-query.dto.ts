@@ -1,38 +1,31 @@
-import { IsOptional, IsString, IsNumber, IsIn } from 'class-validator';
-import { Transform } from 'class-transformer';
+import { IsOptional, IsIn } from 'class-validator';
+import { Type } from 'class-transformer';
+import { BaseQueryDto } from '../../common/dto/base-query.dto';
 
-export class ModuleQueryDto {
+/**
+ * Module Query DTO
+ * Extends BaseQueryDto with module-specific filters and sorting options
+ */
+export class ModuleQueryDto extends BaseQueryDto {
   @IsOptional()
-  @IsString()
-  search?: string;
+  @Type(() => Number)
+  domainId?: number;
 
   @IsOptional()
-  @IsNumber()
-  @Transform(({ value }) => parseInt(value))
-  domain_id?: number;
-
-  @IsOptional()
-  @IsString()
-  @IsIn(['Beginner', 'Intermediate', 'Advanced'])
+  @IsIn(['Beginner', 'Intermediate', 'Advanced'], {
+    message: 'Level must be Beginner, Intermediate, or Advanced',
+  })
   level?: string;
 
   @IsOptional()
-  @IsNumber()
-  @Transform(({ value }) => parseInt(value))
-  page?: number = 1;
+  @IsIn(['title', 'createdOn', 'level', 'duration'], {
+    message: 'Sort by must be title, createdOn, level, or duration',
+  })
+  sortBy?: string = 'createdOn';
 
-  @IsOptional()
-  @IsNumber()
-  @Transform(({ value }) => parseInt(value))
-  limit?: number = 10;
-
-  @IsOptional()
-  @IsString()
-  @IsIn(['title', 'created_on', 'level', 'duration'])
-  sort_by?: string = 'created_on';
-
-  @IsOptional()
-  @IsString()
-  @IsIn(['ASC', 'DESC'])
-  sort_order?: string = 'DESC';
+  // Inherits from BaseQueryDto:
+  // - page?: number = 1
+  // - limit?: number = 10
+  // - search?: string
+  // - sortOrder?: 'ASC' | 'DESC' = 'ASC'
 }

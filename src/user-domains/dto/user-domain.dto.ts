@@ -12,3 +12,4 @@ export class LinkUserToDomainsDto {
   })
   domainIds: number[];
 }
+

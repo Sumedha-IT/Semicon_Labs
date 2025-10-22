@@ -148,11 +148,17 @@ export class UserDomainsService {
 
   /**
    * Lists all domains assigned to a user
-   * Returns domain details: id, name, description
+   * Returns all domain fields including timestamps
    */
-  async listUserDomains(
-    userId: number,
-  ): Promise<Array<{ id: number; name: string; description: string | null }>> {
+  async listUserDomains(userId: number): Promise<
+    Array<{
+      id: number;
+      name: string;
+      description: string | null;
+      created_on: Date;
+      updated_on: Date;
+    }>
+  > {
     // Validate user exists
     await this.validateUserExists(userId);
 
@@ -163,11 +169,13 @@ export class UserDomainsService {
       order: { domain: { name: 'ASC' } },
     });
 
-    // Map to response format
+    // Map to response format with all fields
     return userDomains.map((ud) => ({
       id: ud.domain.id,
       name: ud.domain.name,
       description: ud.domain.description ?? null,
+      created_on: ud.domain.created_on,
+      updated_on: ud.domain.updated_on,
     }));
   }
 
@@ -185,7 +193,7 @@ export class UserDomainsService {
    */
   private async validateUserExists(userId: number): Promise<void> {
     const user = await this.userRepo.findOne({
-      where: { user_id: userId, deleted_on: IsNull() },
+      where: { id: userId, deleted_on: IsNull() },
     });
 
     if (!user) {
@@ -216,7 +224,7 @@ export class UserDomainsService {
     // Check both in parallel for better performance
     const [user, domain] = await Promise.all([
       this.userRepo.findOne({
-        where: { user_id: userId, deleted_on: IsNull() },
+        where: { id: userId, deleted_on: IsNull() },
       }),
       this.domainRepo.findOne({ where: { id: domainId } }),
     ]);

@@ -8,21 +8,22 @@ import {
   IsNotEmpty,
   Allow,
   IsDefined,
+  IsBoolean,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 
 export class EnrollModuleDto {
-  @IsDefined({ message: 'module_id is required' })
+  @IsDefined({ message: 'moduleId is required' })
   @Type(() => Number)
-  @IsNumber({}, { message: 'module_id must be a valid number' })
-  module_id: number;
+  @IsNumber({}, { message: 'moduleId must be a valid number' })
+  moduleId: number;
 }
 
 export class EnrollUserDto {
-  @IsDefined({ message: 'user_id is required' })
+  @IsDefined({ message: 'userId is required' })
   @Type(() => Number)
-  @IsNumber({}, { message: 'user_id must be a valid number' })
-  user_id: number;
+  @IsNumber({}, { message: 'userId must be a valid number' })
+  userId: number;
 }
 
 export class UserModuleQueryDto {
@@ -41,19 +42,34 @@ export class UserModuleQueryDto {
 
   @IsOptional()
   @IsString()
-  status?: string; // 'not_started', 'in_progress', 'completed', 'passed', 'failed'
+  status?: string; // 'todo', 'inProgress', 'completed'
 
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  module_id?: number;
+  moduleId?: number;
 
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  user_id?: number;
+  userId?: number;
+
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return value;
+  })
+  @IsBoolean()
+  enroll?: boolean; // true = enrolled modules, false = available modules from user's domains
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  domainId?: number; // filter by specific domain
 }
 
 export class ModuleUserQueryDto {
@@ -72,26 +88,26 @@ export class ModuleUserQueryDto {
 
   @IsOptional()
   @IsString()
-  status?: string; // 'not_started', 'in_progress', 'completed', 'passed', 'failed'
+  status?: string; // 'todo', 'inProgress', 'completed'
 
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @Min(0)
-  score_min?: number;
+  scoreMin?: number;
 
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @Max(100)
-  score_max?: number;
+  scoreMax?: number;
 }
 
 export class UpdateUserModuleDto {
   @IsOptional()
   @IsInt()
   @Min(0)
-  questions_answered?: number;
+  questionsAnswered?: number;
 
   @IsOptional()
   @IsNumber()
@@ -103,9 +119,9 @@ export class UpdateUserModuleDto {
   @IsNumber()
   @Min(0)
   @Max(100)
-  threshold_score?: number;
+  thresholdScore?: number;
 
   @IsOptional()
   @IsString()
-  status?: string; // 'not_started', 'in_progress', 'completed', 'passed', 'failed' - Auto-set to 'passed'/'failed' when score is updated
+  status?: string; // 'todo', 'inProgress', 'completed' - Auto-set to 'completed' when pass, 'inProgress' when fail
 }

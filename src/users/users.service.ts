@@ -22,15 +22,17 @@ import { User } from './entities/user.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { CreateIndividualUserDto } from './dto/create-individual-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { UserQueryDto, SortBy, SortOrder } from './dto/user-query.dto';
+import { UserQueryDto, SortBy } from './dto/user-query.dto';
 import {
   PaginatedResponseDto,
   PaginationMetaDto,
 } from './dto/paginated-response.dto';
 import { UserDomainsService } from '../user-domains/user-domains.service';
 import { UserModulesService } from '../user-modules/user-modules.service';
+import { UserTopicsService } from '../user-topics/user-topics.service';
 import { UserRole } from '../common/constants/user-roles';
 import { Organization } from '../organizations/entities/organization.entity';
+import { QueryBuilderHelper } from '../common/utils/query-builder.helper';
 
 @Injectable()
 export class UsersService {
@@ -42,6 +44,8 @@ export class UsersService {
     private readonly userDomainsService: UserDomainsService,
     @Inject(forwardRef(() => UserModulesService))
     private readonly userModulesService: UserModulesService,
+    @Inject(forwardRef(() => UserTopicsService))
+    private readonly userTopicsService: UserTopicsService,
   ) {}
 
   // ============================================================================
@@ -118,21 +122,21 @@ export class UsersService {
    */
   async findOne(id: number): Promise<User | null> {
     return this.usersRepository.findOne({
-      where: { user_id: id, deleted_on: IsNull() },
+      where: { id: id, deleted_on: IsNull() },
     });
   }
 
   /**
    * Finds all non-deleted users (returns only user IDs)
    */
-  async findAll(): Promise<{ user_id: number }[]> {
+  async findAll(): Promise<{ id: number }[]> {
     const users = await this.usersRepository.find({
       where: { deleted_on: IsNull() },
       select: {
-        user_id: true,
+        id: true,
       },
     });
-    return users.map((user) => ({ user_id: user.user_id }));
+    return users.map((user) => ({ id: user.id }));
   }
 
   /**
@@ -178,7 +182,7 @@ export class UsersService {
   async remove(id: number): Promise<{ success: boolean; message: string }> {
     // First check if user exists at all (including soft deleted)
     const userAnyStatus = await this.usersRepository.findOne({
-      where: { user_id: id },
+      where: { id: id },
     });
 
     if (!userAnyStatus) {
@@ -227,11 +231,12 @@ export class UsersService {
 
     // Clean up user associations before soft delete
     await this.cleanupUserDomains(id);
+    await this.cleanupUserTopics(id);
     await this.cleanupUserModules(id);
 
     // Soft delete the user using ORM
     await this.usersRepository.update(
-      { user_id: id },
+      { id: id },
       {
         deleted_on: new Date(),
         updated_on: new Date(),
@@ -250,7 +255,7 @@ export class UsersService {
   async debugUser(id: number): Promise<any> {
     // Check if user exists at all (including soft deleted)
     const userAnyStatus = await this.usersRepository.findOne({
-      where: { user_id: id },
+      where: { id: id },
     });
 
     // Check if user exists and is not deleted
@@ -300,7 +305,7 @@ export class UsersService {
    */
   async findOneInOrganization(id: number, orgId: number): Promise<User | null> {
     return this.usersRepository.findOne({
-      where: { user_id: id, org_id: orgId, deleted_on: IsNull() },
+      where: { id: id, org_id: orgId, deleted_on: IsNull() },
       relations: this.getStandardRelations(),
     });
   }
@@ -391,6 +396,7 @@ export class UsersService {
 
     // Clean up user associations before soft delete
     await this.cleanupUserDomains(id, ` from organization ${orgId}`);
+    await this.cleanupUserTopics(id, ` from organization ${orgId}`);
     await this.cleanupUserModules(id, ` from organization ${orgId}`);
 
     await this.usersRepository.update(id, {
@@ -497,25 +503,32 @@ export class UsersService {
 
       const queryBuilder = this.buildUserQuery(queryDto, requestingUser);
 
-      // Get total count for pagination
-      const total = await queryBuilder.getCount();
-
-      // Apply pagination
+      // Apply pagination and get results
       const page = queryDto.page || 1;
       const limit = queryDto.limit || 20;
-      const skip = (page - 1) * limit;
-      queryBuilder.skip(skip).take(limit);
-
-      // Execute query
-      const users = await queryBuilder.getMany();
+      const result = await QueryBuilderHelper.paginate(queryBuilder, page, limit);
 
       // Create pagination metadata
-      const pagination = new PaginationMetaDto(page, limit, total);
+      const pagination = new PaginationMetaDto(page, limit, result.total);
 
       // Create applied filters object
-      const appliedFilters = this.createAppliedFiltersObject(queryDto);
+      const appliedFilters = QueryBuilderHelper.buildAppliedFilters({
+        role: queryDto.role,
+        orgId: queryDto.orgId,
+        managerId: queryDto.managerId,
+        active: queryDto.active,
+        location: queryDto.location,
+        deviceNo: queryDto.deviceNo,
+        toolId: queryDto.toolId,
+        phone: queryDto.phone,
+        joinedAfter: queryDto.joinedAfter,
+        joinedBefore: queryDto.joinedBefore,
+        updatedAfter: queryDto.updatedAfter,
+        updatedBefore: queryDto.updatedBefore,
+        search: queryDto.search,
+      });
 
-      return new PaginatedResponseDto(users, pagination, appliedFilters);
+      return new PaginatedResponseDto(result.data, pagination, appliedFilters);
     } catch (error) {
       console.error('Error in findUsersWithPagination:', error);
 
@@ -834,7 +847,7 @@ export class UsersService {
       where: {
         org_id: orgId,
         deleted_on: IsNull(),
-        user_id: MoreThan(0),
+        id: MoreThan(0),
       },
     });
 
@@ -999,7 +1012,7 @@ export class UsersService {
           org_id: currentUser.org_id,
           role: 'ClientAdmin',
           deleted_on: IsNull(),
-          user_id: MoreThan(0), // Exclude current user
+          id: MoreThan(0), // Exclude current user
         },
       });
 
@@ -1044,7 +1057,7 @@ export class UsersService {
     if (queryDto.orgId !== undefined && queryDto.orgId !== null) {
       const organization = await this.organizationsRepository.findOne({
         where: {
-          org_id: queryDto.orgId,
+          id: queryDto.orgId,
           deleted_on: IsNull(),
         },
       });
@@ -1060,7 +1073,7 @@ export class UsersService {
     if (queryDto.managerId !== undefined && queryDto.managerId !== null) {
       const manager = await this.usersRepository.findOne({
         where: {
-          user_id: queryDto.managerId,
+          id: queryDto.managerId,
           deleted_on: IsNull(),
         },
       });
@@ -1134,6 +1147,27 @@ export class UsersService {
     }
   }
 
+  private async cleanupUserTopics(
+    userId: number,
+    context: string = '',
+  ): Promise<void> {
+    try {
+      const cleanedCount =
+        await this.userTopicsService.cleanupTopicsForUser(userId);
+      if (cleanedCount > 0) {
+        console.log(
+          `Cleaned up ${cleanedCount} topic assignment(s) for user ${userId}${context}`,
+        );
+      }
+    } catch (error) {
+      console.error(
+        `Error cleaning up topic assignments for user ${userId}${context}:`,
+        error,
+      );
+      // Continue even if topic cleanup fails
+    }
+  }
+
   // ----------------------------------------------------------------------------
   // Update Helpers
   // ----------------------------------------------------------------------------
@@ -1182,7 +1216,7 @@ export class UsersService {
         // Reassign team members to ClientAdmin
         await this.usersRepository.update(
           { manager_id: managerId, org_id: orgId, deleted_on: IsNull() },
-          { manager_id: clientAdmin.user_id },
+          { manager_id: clientAdmin.id },
         );
       } else {
         // Business rule: If no ClientAdmin exists, managers shouldn't exist either
@@ -1218,7 +1252,6 @@ export class UsersService {
   ): SelectQueryBuilder<User> {
     const queryBuilder = this.usersRepository
       .createQueryBuilder('user')
-      .select(['user.user_id', 'user.name', 'user.email', 'user.role'])
       .where('user.deleted_on IS NULL');
 
     // Apply role-based access control
@@ -1228,46 +1261,20 @@ export class UsersService {
       });
     }
 
-    // Apply filters
-    this.applyFilters(queryBuilder, queryDto);
-
-    // Apply sorting
-    this.applySorting(queryBuilder, queryDto);
-
-    return queryBuilder;
-  }
-
-  /**
-   * Applies filters to a query builder based on query DTO
-   */
-  private applyFilters(
-    queryBuilder: SelectQueryBuilder<User>,
-    queryDto: UserQueryDto,
-  ): void {
-    // Role filter
-    if (queryDto.role) {
-      queryBuilder.andWhere('user.role = :role', { role: queryDto.role });
-    }
-
-    // Organization filter
-    if (queryDto.orgId) {
-      queryBuilder.andWhere('user.org_id = :orgId', { orgId: queryDto.orgId });
-    }
-
-    // Manager filter
-    if (queryDto.managerId) {
-      queryBuilder.andWhere('user.manager_id = :managerId', {
-        managerId: queryDto.managerId,
-      });
-    }
+    // Apply filters using QueryBuilderHelper
+    QueryBuilderHelper.applyEqualityFilter(queryBuilder, 'user', 'role', queryDto.role);
+    QueryBuilderHelper.applyEqualityFilter(queryBuilder, 'user', 'org_id', queryDto.orgId);
+    QueryBuilderHelper.applyEqualityFilter(queryBuilder, 'user', 'manager_id', queryDto.managerId);
+    QueryBuilderHelper.applyEqualityFilter(queryBuilder, 'user', 'tool_id', queryDto.toolId);
+    QueryBuilderHelper.applyLikeFilter(queryBuilder, 'user', 'location', queryDto.location);
+    QueryBuilderHelper.applyLikeFilter(queryBuilder, 'user', 'registered_device_no', queryDto.deviceNo);
+    QueryBuilderHelper.applyLikeFilter(queryBuilder, 'user', 'user_phone', queryDto.phone);
 
     // Active filter (based on last_login)
     if (queryDto.active !== undefined) {
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       if (queryDto.active) {
-        queryBuilder.andWhere('user.last_login > :thirtyDaysAgo', {
-          thirtyDaysAgo,
-        });
+        queryBuilder.andWhere('user.last_login > :thirtyDaysAgo', { thirtyDaysAgo });
       } else {
         queryBuilder.andWhere(
           '(user.last_login IS NULL OR user.last_login <= :thirtyDaysAgo)',
@@ -1276,131 +1283,52 @@ export class UsersService {
       }
     }
 
-    // Location filter
-    if (queryDto.location) {
-      queryBuilder.andWhere('user.location LIKE :location', {
-        location: `%${queryDto.location}%`,
-      });
-    }
-
-    // Device number filter
-    if (queryDto.deviceNo) {
-      queryBuilder.andWhere('user.registered_device_no LIKE :deviceNo', {
-        deviceNo: `%${queryDto.deviceNo}%`,
-      });
-    }
-
-    // Tool ID filter
-    if (queryDto.toolId) {
-      queryBuilder.andWhere('user.tool_id = :toolId', {
-        toolId: queryDto.toolId,
-      });
-    }
-
-    // Phone filter
-    if (queryDto.phone) {
-      queryBuilder.andWhere('user.user_phone LIKE :phone', {
-        phone: `%${queryDto.phone}%`,
-      });
-    }
-
     // Date range filters
-    if (queryDto.joinedAfter || queryDto.joinedBefore) {
-      if (queryDto.joinedAfter && queryDto.joinedBefore) {
-        queryBuilder.andWhere(
-          'user.joined_on BETWEEN :joinedAfter AND :joinedBefore',
-          {
-            joinedAfter: queryDto.joinedAfter,
-            joinedBefore: queryDto.joinedBefore,
-          },
-        );
-      } else if (queryDto.joinedAfter) {
-        queryBuilder.andWhere('user.joined_on >= :joinedAfter', {
-          joinedAfter: queryDto.joinedAfter,
-        });
-      } else if (queryDto.joinedBefore) {
-        queryBuilder.andWhere('user.joined_on <= :joinedBefore', {
-          joinedBefore: queryDto.joinedBefore,
-        });
-      }
-    }
-
-    if (queryDto.updatedAfter || queryDto.updatedBefore) {
-      if (queryDto.updatedAfter && queryDto.updatedBefore) {
-        queryBuilder.andWhere(
-          'user.updated_on BETWEEN :updatedAfter AND :updatedBefore',
-          {
-            updatedAfter: queryDto.updatedAfter,
-            updatedBefore: queryDto.updatedBefore,
-          },
-        );
-      } else if (queryDto.updatedAfter) {
-        queryBuilder.andWhere('user.updated_on >= :updatedAfter', {
-          updatedAfter: queryDto.updatedAfter,
-        });
-      } else if (queryDto.updatedBefore) {
-        queryBuilder.andWhere('user.updated_on <= :updatedBefore', {
-          updatedBefore: queryDto.updatedBefore,
-        });
-      }
-    }
+    QueryBuilderHelper.applyDateRangeFilter(
+      queryBuilder,
+      'user',
+      'joined_on',
+      queryDto.joinedAfter,
+      queryDto.joinedBefore,
+    );
+    QueryBuilderHelper.applyDateRangeFilter(
+      queryBuilder,
+      'user',
+      'updated_on',
+      queryDto.updatedAfter,
+      queryDto.updatedBefore,
+    );
 
     // Search filter (name or email)
     if (queryDto.search) {
-      queryBuilder.andWhere(
-        '(user.name LIKE :search OR user.email LIKE :search)',
-        { search: `%${queryDto.search}%` },
+      QueryBuilderHelper.applySearch(
+        queryBuilder,
+        'user',
+        ['name', 'email'],
+        queryDto.search,
       );
     }
-  }
 
-  /**
-   * Applies sorting to a query builder
-   */
-  private applySorting(
-    queryBuilder: SelectQueryBuilder<User>,
-    queryDto: UserQueryDto,
-  ): void {
-    const sortBy = queryDto.sortBy || SortBy.EMAIL;
-    const sortOrder = queryDto.sortOrder || SortOrder.ASC;
-
-    // Map sortBy enum to actual database column names
-    const columnMapping = {
-      [SortBy.NAME]: 'user.name',
-      [SortBy.EMAIL]: 'user.email',
-      [SortBy.ROLE]: 'user.role',
-      [SortBy.JOINED_ON]: 'user.joined_on',
-      [SortBy.UPDATED_ON]: 'user.updated_on',
-      [SortBy.LOCATION]: 'user.location',
-      [SortBy.USER_PHONE]: 'user.user_phone',
+    // Apply sorting
+    const columnMap = {
+      [SortBy.NAME]: 'name',
+      [SortBy.EMAIL]: 'email',
+      [SortBy.ROLE]: 'role',
+      [SortBy.JOINED_ON]: 'joined_on',
+      [SortBy.UPDATED_ON]: 'updated_on',
+      [SortBy.LOCATION]: 'location',
+      [SortBy.USER_PHONE]: 'user_phone',
     };
+    QueryBuilderHelper.applySorting(
+      queryBuilder,
+      'user',
+      columnMap,
+      queryDto.sortBy,
+      queryDto.sortOrder,
+      'email',
+    );
 
-    const columnName = columnMapping[sortBy];
-    queryBuilder.orderBy(columnName, sortOrder.toUpperCase() as 'ASC' | 'DESC');
+    return queryBuilder;
   }
 
-  /**
-   * Creates an object containing all applied filters from query DTO
-   */
-  private createAppliedFiltersObject(
-    queryDto: UserQueryDto,
-  ): Record<string, any> {
-    const filters: Record<string, any> = {};
-
-    if (queryDto.role) filters.role = queryDto.role;
-    if (queryDto.orgId) filters.orgId = queryDto.orgId;
-    if (queryDto.managerId) filters.managerId = queryDto.managerId;
-    if (queryDto.active !== undefined) filters.active = queryDto.active;
-    if (queryDto.location) filters.location = queryDto.location;
-    if (queryDto.deviceNo) filters.deviceNo = queryDto.deviceNo;
-    if (queryDto.toolId) filters.toolId = queryDto.toolId;
-    if (queryDto.phone) filters.phone = queryDto.phone;
-    if (queryDto.joinedAfter) filters.joinedAfter = queryDto.joinedAfter;
-    if (queryDto.joinedBefore) filters.joinedBefore = queryDto.joinedBefore;
-    if (queryDto.updatedAfter) filters.updatedAfter = queryDto.updatedAfter;
-    if (queryDto.updatedBefore) filters.updatedBefore = queryDto.updatedBefore;
-    if (queryDto.search) filters.search = queryDto.search;
-
-    return filters;
-  }
 }

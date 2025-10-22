@@ -1,4 +1,4 @@
-import { IsOptional, IsString, Length } from 'class-validator';
+import { IsOptional, IsString, Length, IsNotEmpty } from 'class-validator';
 
 export class UpdateDomainDto {
   @IsOptional()
@@ -9,4 +9,8 @@ export class UpdateDomainDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @IsNotEmpty()
+  @IsString()
+  reason: string; // Mandatory field for changelog
 }

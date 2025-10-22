@@ -5,60 +5,41 @@ import {
   IsEnum,
   IsBoolean,
   IsDateString,
-  Min,
   Max,
   IsIn,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+import { BaseQueryDto } from '../../common/dto/base-query.dto';
 import { UserRole } from '../../common/constants/user-roles';
-
-export enum SortOrder {
-  ASC = 'asc',
-  DESC = 'desc',
-}
 
 export enum SortBy {
   NAME = 'name',
   EMAIL = 'email',
   ROLE = 'role',
-  JOINED_ON = 'joined_on',
-  UPDATED_ON = 'updated_on',
+  JOINED_ON = 'joinedOn',
+  UPDATED_ON = 'updatedOn',
   LOCATION = 'location',
-  USER_PHONE = 'user_phone',
+  USER_PHONE = 'userPhone',
 }
 
-export class UserQueryDto {
-  // Pagination
+/**
+ * User Query DTO
+ * Extends BaseQueryDto with user-specific filters and sorting options
+ */
+export class UserQueryDto extends BaseQueryDto {
+  // Override limit with max constraint
   @IsOptional()
-  @Transform(({ value }) => {
-    const num = Number(value);
-    return isNaN(num) ? 1 : num;
-  })
-  @IsNumber({}, { message: 'Page must be a number' })
-  @Min(1, { message: 'Page must be at least 1' })
-  page?: number = 1;
-
-  @IsOptional()
-  @Transform(({ value }) => {
-    const num = Number(value);
-    return isNaN(num) ? 10 : num;
-  })
-  @IsNumber({}, { message: 'Limit must be a number' })
-  @Min(1, { message: 'Limit must be at least 1' })
+  @Type(() => Number)
   @Max(10, { message: 'Limit cannot exceed 10' })
   limit?: number = 10;
 
-  // Sorting
+  // User-specific sorting
   @IsOptional()
   @IsEnum(SortBy, {
     message:
-      'SortBy must be one of: name, email, role, joined_on, updated_on, location, user_phone',
+      'SortBy must be one of: name, email, role, joinedOn, updatedOn, location, userPhone',
   })
   sortBy?: SortBy = SortBy.EMAIL;
-
-  @IsOptional()
-  @IsEnum(SortOrder, { message: 'SortOrder must be either "asc" or "desc"' })
-  sortOrder?: SortOrder = SortOrder.ASC;
 
   // Basic Filters
   @IsOptional()
@@ -145,10 +126,7 @@ export class UserQueryDto {
   )
   updatedBefore?: string;
 
-  // Search
-  @IsOptional()
-  @IsString({ message: 'Search query must be a string' })
-  search?: string;
+  // search is inherited from BaseQueryDto
 
   // Phone Filter
   @IsOptional()

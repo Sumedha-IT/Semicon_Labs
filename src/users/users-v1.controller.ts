@@ -27,7 +27,7 @@ import { CreateIndividualUserDto } from './dto/create-individual-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { Public } from '../common/decorator/public.decorator';
 import { UserDomainsService } from '../user-domains/user-domains.service';
-import { LinkUserToDomainsDto } from '../user-domains/dto/link-user-to-domains.dto';
+import { LinkUserToDomainsDto } from '../user-domains/dto/user-domain.dto';
 import {
   EnrollModuleDto,
   UserModuleQueryDto,
@@ -60,12 +60,12 @@ export class UsersV1Controller {
         role: UserRole.LEARNER,
       };
       const user = await this.usersService.create(individualUserData);
-      return { user_id: user.user_id };
+      return { id: user.id };
     }
 
     // For organizational users (org_id provided), create normally
     const user = await this.usersService.create(createUserDto);
-    return { user_id: user.user_id };
+    return { id: user.id };
   }
 
   // Protected endpoint - Create users with role-based permissions:
@@ -105,7 +105,7 @@ export class UsersV1Controller {
     }
 
     const user = await this.usersService.create(createUserDto);
-    return { user_id: user.user_id };
+    return { id: user.id };
   }
 
   // Get all users with comprehensive pagination and filtering
@@ -125,26 +125,28 @@ export class UsersV1Controller {
       req.user,
     );
 
-    // Return 204 No Content if no results found
-    if (result.pagination.total === 0) {
+    // Return 204 No Content if no data in response
+    if (result.data.length === 0) {
       return res.status(HttpStatus.NO_CONTENT).send();
     }
 
     return res.status(HttpStatus.OK).json(result);
   }
 
-  // Admin endpoint to get all user-module enrollments with filters
-  // IMPORTANT: This must come BEFORE @Get(':id') to avoid route conflicts
-  @Get('enrollments')
+  // Admin endpoint to get all user-module relationships with filters
+  // Without :id parameter = system-wide view of all users' modules
+  // Query params: user_id, module_id, status, page, limit
+  // IMPORTANT: This must come BEFORE @Get(':id/modules') to avoid route conflicts
+  @Get('modules')
   @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER)
-  async getAllEnrollments(
+  async getAllUserModules(
     @Query() queryDto: UserModuleQueryDto,
     @Res() res: Response,
   ) {
     const result = await this.userModulesService.findAllEnrollments(queryDto);
 
-    // Return 204 No Content if no results found
-    if (result.total === 0) {
+    // Return 204 No Content if no data in response
+    if (result.data.length === 0) {
       return res.status(HttpStatus.NO_CONTENT).send();
     }
 
@@ -493,7 +495,7 @@ export class UsersV1Controller {
 
   @Get(':id/domains')
   @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER)
-  async listUserDomains(@Param('id') id: string) {
+  async listUserDomains(@Param('id') id: string, @Res() res: Response) {
     const userId = parseInt(id, 10);
 
     if (isNaN(userId)) {
@@ -501,7 +503,14 @@ export class UsersV1Controller {
     }
 
     // This will throw NotFoundException if user doesn't exist
-    return this.userDomainsService.listUserDomains(userId);
+    const domains = await this.userDomainsService.listUserDomains(userId);
+
+    // Return 204 No Content if no domains linked
+    if (domains.length === 0) {
+      return res.status(HttpStatus.NO_CONTENT).send();
+    }
+
+    return res.status(HttpStatus.OK).json(domains);
   }
 
   @Delete(':id/domains/:domainId')
@@ -537,7 +546,8 @@ export class UsersV1Controller {
 
   // User-centric module operations
 
-  @Post(':id/modules/enroll')
+  // Enroll user in a module - both IDs in URL (no request body needed)
+  @Post(':id/modules/:moduleId/enroll')
   @Roles(
     UserRole.PLATFORM_ADMIN,
     UserRole.CLIENT_ADMIN,
@@ -547,12 +557,14 @@ export class UsersV1Controller {
   @HttpCode(HttpStatus.CREATED)
   async enrollInModule(
     @Param('id') id: string,
-    @Body() enrollDto: EnrollModuleDto,
+    @Param('moduleId') moduleId: string,
+    @Body() body: any, // Accept empty body to prevent JSON parsing errors
     @Request() req,
   ) {
     const userId = parseInt(id, 10);
-    if (isNaN(userId)) {
-      throw new BadRequestException('Invalid user ID');
+    const modId = parseInt(moduleId, 10);
+    if (isNaN(userId) || isNaN(modId)) {
+      throw new BadRequestException('Invalid user ID or module ID');
     }
 
     // Learners can only enroll themselves
@@ -562,45 +574,7 @@ export class UsersV1Controller {
       );
     }
 
-    return this.userModulesService.enroll(userId, enrollDto);
-  }
-
-  @Get(':id/modules/available')
-  @Roles(
-    UserRole.PLATFORM_ADMIN,
-    UserRole.CLIENT_ADMIN,
-    UserRole.MANAGER,
-    UserRole.LEARNER,
-  )
-  async getAvailableModules(
-    @Param('id') id: string,
-    @Query() queryDto: UserModuleQueryDto,
-    @Request() req,
-    @Res() res: Response,
-  ) {
-    const userId = parseInt(id, 10);
-    if (isNaN(userId)) {
-      throw new BadRequestException('Invalid user ID');
-    }
-
-    // Learners can only view their own available modules
-    if (req.user.role === UserRole.LEARNER && req.user.userId !== userId) {
-      throw new BadRequestException(
-        'Learners can only view their own available modules',
-      );
-    }
-
-    const result = await this.userModulesService.getAvailableModules(
-      userId,
-      queryDto,
-    );
-
-    // Return 204 No Content if no results found
-    if (result.total === 0) {
-      return res.status(HttpStatus.NO_CONTENT).send();
-    }
-
-    return res.status(HttpStatus.OK).json(result);
+    return this.userModulesService.enroll(userId, { moduleId: modId });
   }
 
   @Get(':id/modules/:moduleId')
@@ -622,6 +596,12 @@ export class UsersV1Controller {
     return this.userModulesService.getUserModule(userId, modId);
   }
 
+  // Get user's modules with flexible filtering
+  // Query params:
+  //   - enroll=false: show available modules from user's domains (not enrolled yet)
+  //   - enroll=true or omitted: show enrolled modules (default)
+  //   - domain_id: filter by specific domain
+  //   - status: filter by enrollment status (for enrolled modules)
   @Get(':id/modules')
   @Roles(
     UserRole.PLATFORM_ADMIN,
@@ -650,8 +630,8 @@ export class UsersV1Controller {
       queryDto,
     );
 
-    // Return 204 No Content if no results found
-    if (result.total === 0) {
+    // Return 204 No Content if no data in response
+    if (result.data.length === 0) {
       return res.status(HttpStatus.NO_CONTENT).send();
     }
 
@@ -674,7 +654,7 @@ export class UsersV1Controller {
     return this.userModulesService.updateUserModule(userId, modId, updateDto);
   }
 
-  @Delete(':id/modules/:moduleId')
+  @Delete(':id/modules/:moduleId/enroll')
   @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER)
   @HttpCode(HttpStatus.OK)
   async unenrollFromModule(

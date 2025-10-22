@@ -1,17 +1,16 @@
-import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  CreateDateColumn,
-  ManyToOne,
-  JoinColumn,
-} from 'typeorm';
+import { Entity, Column, ManyToOne, JoinColumn, CreateDateColumn, UpdateDateColumn, PrimaryGeneratedColumn } from 'typeorm';
 import { Organization } from '../../organizations/entities/organization.entity';
 
 @Entity({ name: 'users' })
 export class User {
-  @PrimaryGeneratedColumn({ name: 'user_id' })
-  user_id: number;
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @CreateDateColumn({ name: 'joined_on', type: 'timestamptz' })
+  joined_on: Date;
+
+  @UpdateDateColumn({ name: 'updated_on', type: 'timestamptz' })
+  updated_on: Date;
 
   @Column({ length: 100 })
   name: string;
@@ -54,12 +53,6 @@ export class User {
   @JoinColumn({ name: 'manager_id' })
   manager: User;
 
-  @CreateDateColumn()
-  joined_on: Date;
-
-  @CreateDateColumn()
-  updated_on: Date;
-
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   deleted_on: Date;
 }

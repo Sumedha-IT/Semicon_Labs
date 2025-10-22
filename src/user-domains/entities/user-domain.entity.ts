@@ -1,29 +1,16 @@
-import {
-  Entity,
-  PrimaryGeneratedColumn,
-  Column,
-  CreateDateColumn,
-  Index,
-  ManyToOne,
-  JoinColumn,
-} from 'typeorm';
+import { Entity, Column, Index, ManyToOne, JoinColumn } from 'typeorm';
+import { BaseEntity } from '../../common/entities/base.entity';
 import { User } from '../../users/entities/user.entity';
 import { Domain } from '../../domains/entities/domain.entity';
 
 @Entity({ name: 'user_domains' })
 @Index(['user_id', 'domain_id'], { unique: true })
-export class UserDomain {
-  @PrimaryGeneratedColumn()
-  id: number;
-
+export class UserDomain extends BaseEntity {
   @Column({ type: 'int' })
   user_id: number;
 
   @Column({ type: 'int' })
   domain_id: number;
-
-  @CreateDateColumn({ name: 'created_on', type: 'timestamptz' })
-  created_on: Date;
 
   // Add proper relationships
   @ManyToOne(() => User, { nullable: false, onDelete: 'CASCADE' })

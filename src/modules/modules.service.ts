@@ -7,11 +7,13 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Module } from './entities/module.entity';
-import { DomainModule } from './entities/domain-module.entity';
+import { DomainModule } from '../domain-modules/entities/domain-module.entity';
 import { CreateModuleDto } from './dto/create-module.dto';
 import { UpdateModuleDto } from './dto/update-module.dto';
 import { ModuleQueryDto } from './dto/module-query.dto';
 import { Domain } from '../domains/entities/domain.entity';
+import { ChangelogService } from '../changelog/changelog.service';
+import { QueryBuilderHelper } from '../common/utils/query-builder.helper';
 
 @Injectable()
 export class ModulesService {
@@ -22,6 +24,7 @@ export class ModulesService {
     private domainModuleRepository: Repository<DomainModule>,
     @InjectRepository(Domain)
     private domainRepository: Repository<Domain>,
+    private readonly changelogService: ChangelogService,
   ) {}
 
   // ============================================================================
@@ -76,77 +79,64 @@ export class ModulesService {
   }
 
   /**
-   * Finds a single module by ID with its domains
+   * Finds a single module by ID
    */
   async findOne(id: number) {
-    // Use entity objects with relations
     const module = await this.moduleRepository.findOne({
       where: { id },
-      relations: {
-        domainModules: {
-          domain: true,
-        },
-      },
     });
 
     if (!module) {
       throw new NotFoundException(`Module with ID ${id} not found`);
     }
 
-    // Map domains from relations
-    const domains = module.domainModules.map((dm) => ({
-      id: dm.domain.id,
-      name: dm.domain.name,
-      description: dm.domain.description,
-    }));
-
     return {
       id: module.id,
       title: module.title,
-      skills: module.skills,
       desc: module.desc,
       duration: module.duration,
       level: module.level,
-      threshold_score: module.threshold_score,
       created_on: module.created_on,
       updated_on: module.updated_on,
-      domains: domains,
     };
   }
 
   /**
-   * Updates a module's information (title, desc, duration, level, skills)
+   * Updates a module's information (title, desc, duration, level, threshold_score)
    * Domain associations should be updated via linkDomains/unlinkDomain methods
    */
-  async update(id: number, updateModuleDto: UpdateModuleDto) {
+  async update(id: number, updateModuleDto: UpdateModuleDto, userId: number) {
     const module = await this.validateModuleExists(id);
 
+    // Extract reason for changelog (don't save it in module)
+    const { reason, ...moduleData } = updateModuleDto;
+
     // Check if title is being updated and if it conflicts with existing module
-    if (updateModuleDto.title && updateModuleDto.title !== module.title) {
+    if (moduleData.title && moduleData.title !== module.title) {
       const existingModule = await this.moduleRepository.findOne({
-        where: { title: updateModuleDto.title },
+        where: { title: moduleData.title },
       });
 
       if (existingModule && existingModule.id !== id) {
         throw new ConflictException(
-          `Module with title "${updateModuleDto.title}" already exists`,
+          `Module with title "${moduleData.title}" already exists`,
         );
       }
     }
 
-    Object.assign(module, updateModuleDto);
+    Object.assign(module, moduleData);
     await this.moduleRepository.save(module);
+
+    // Create changelog entry
+    await this.changelogService.createLog({
+      changeType: 'module',
+      changeTypeId: id,
+      userId: userId,
+      reason,
+    });
 
     // Return module with domain info
     return this.findOne(id);
-  }
-
-  /**
-   * Deletes a module (hard delete with cascade to user_modules)
-   */
-  async remove(id: number): Promise<void> {
-    const module = await this.validateModuleExists(id);
-    await this.moduleRepository.remove(module);
   }
 
   // ----------------------------------------------------------------------------
@@ -162,73 +152,62 @@ export class ModulesService {
       page = 1,
       limit = 10,
       search,
-      domain_id,
+      domainId,
       level,
-      sort_by = 'created_on',
-      sort_order = 'DESC',
+      sortBy = 'createdOn',
+      sortOrder = 'DESC',
     } = queryDto;
 
-    // Validate domain exists if domain_id is specified
-    if (domain_id !== undefined && domain_id !== null) {
-      await this.validateDomainExists(domain_id);
+    // Validate domain exists if domainId is specified
+    if (domainId !== undefined && domainId !== null) {
+      await this.validateDomainExists(domainId);
     }
 
     const queryBuilder = this.moduleRepository
       .createQueryBuilder('m')
-      .leftJoin('domain_modules', 'dm', 'dm.module_id = m.id')
-      .leftJoin('domains', 'd', 'd.id = dm.domain_id');
-
-    // Apply filters
-    if (search) {
-      queryBuilder.where('m.title ILIKE :search OR m.desc ILIKE :search', {
-        search: `%${search}%`,
-      });
-    }
-
-    if (domain_id) {
-      queryBuilder.andWhere('dm.domain_id = :domain_id', { domain_id });
-    }
-
-    if (level) {
-      queryBuilder.andWhere('m.level = :level', { level });
-    }
-
-    // Get count before grouping
-    const totalQuery = queryBuilder.clone();
-    const totalResult = await totalQuery
-      .select('COUNT(DISTINCT m.id)', 'total')
-      .getRawOne();
-    const total = parseInt(totalResult?.total || 0);
-
-    // Get modules with domains
-    queryBuilder
       .select([
-        'm.id AS id',
-        'm.title AS title',
-        'm.desc AS description',
-        'm.duration AS duration',
-        'm.level AS level',
-        'm.threshold_score AS threshold_score',
-        'm.created_on AS created_on',
-        `STRING_AGG(DISTINCT d.name, ', ' ORDER BY d.name) AS domain_names`,
-        `ARRAY_AGG(DISTINCT d.id) FILTER (WHERE d.id IS NOT NULL) AS domain_ids`,
-      ])
-      .groupBy(
-        'm.id, m.title, m.desc, m.duration, m.level, m.threshold_score, m.created_on',
-      )
-      .orderBy(`m.${sort_by}`, sort_order as 'ASC' | 'DESC')
-      .offset((page - 1) * limit)
-      .limit(limit);
+        'm.id',
+        'm.title',
+        'm.desc',
+        'm.duration',
+        'm.level',
+        'm.created_on',
+      ]);
 
-    const modules = await queryBuilder.getRawMany();
+    // Apply filters using QueryBuilderHelper
+    if (search) {
+      QueryBuilderHelper.applySearch(queryBuilder, 'm', ['title', 'desc'], search);
+    }
 
-    return {
-      data: modules,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
+    if (domainId) {
+      // Join only when filtering by domain
+      queryBuilder
+        .innerJoin('domain_modules', 'dm', 'dm.module_id = m.id')
+        .andWhere('dm.domain_id = :domainId', { domainId });
+    }
+
+    QueryBuilderHelper.applyEqualityFilter(queryBuilder, 'm', 'level', level);
+
+    // Apply sorting
+    const columnMap: Record<string, string> = {
+      title: 'title',
+      createdOn: 'created_on',
+      level: 'level',
+      duration: 'duration',
     };
+    QueryBuilderHelper.applySorting(
+      queryBuilder,
+      'm',
+      columnMap,
+      sortBy,
+      sortOrder,
+      'created_on',
+    );
+
+    // Apply pagination
+    const result = await QueryBuilderHelper.paginate(queryBuilder, page, limit);
+
+    return result;
   }
 
   // ============================================================================
@@ -285,103 +264,4 @@ export class ModulesService {
     return invalidIds;
   }
 
-  // ----------------------------------------------------------------------------
-  // Module-Domain Linking Operations
-  // ----------------------------------------------------------------------------
-
-  /**
-   * Link module to additional domains
-   */
-  async linkDomains(moduleId: number, domainIds: number[]) {
-    await this.validateModuleExists(moduleId);
-
-    const invalidDomains = await this.validateDomainsExist(domainIds);
-    if (invalidDomains.length > 0) {
-      throw new BadRequestException(
-        `Domains not found: ${invalidDomains.join(', ')}`,
-      );
-    }
-
-    //Get existing links
-    const existing = await this.domainModuleRepository.find({
-      where: { module_id: moduleId },
-    });
-    const existingDomainIds = existing.map((dm) => dm.domain_id);
-
-    // Filter out already linked domains
-    const newDomainIds = domainIds.filter(
-      (id) => !existingDomainIds.includes(id),
-    );
-
-    if (newDomainIds.length === 0) {
-      return {
-        message: 'All specified domains are already linked to this module',
-        linked: [],
-        skipped: domainIds,
-      };
-    }
-
-    const domainLinks = newDomainIds.map((domainId) =>
-      this.domainModuleRepository.create({
-        module_id: moduleId,
-        domain_id: domainId,
-      }),
-    );
-    await this.domainModuleRepository.save(domainLinks);
-
-    return {
-      message: `Linked module to ${newDomainIds.length} new domain(s)`,
-      linked: newDomainIds,
-      skipped: domainIds.filter((id) => existingDomainIds.includes(id)),
-    };
-  }
-
-  /**
-   * Unlink module from a domain
-   */
-  async unlinkDomain(moduleId: number, domainId: number) {
-    await this.validateModuleExists(moduleId);
-    await this.validateDomainExists(domainId);
-
-    const result = await this.domainModuleRepository.delete({
-      module_id: moduleId,
-      domain_id: domainId,
-    });
-
-    if (result.affected === 0) {
-      throw new NotFoundException(
-        `Module ${moduleId} is not linked to domain ${domainId}`,
-      );
-    }
-
-    return {
-      message: `Successfully unlinked module ${moduleId} from domain ${domainId}`,
-    };
-  }
-
-  /**
-   * Get all domains linked to a module
-   */
-  async getModuleDomains(moduleId: number) {
-    // Use entity objects with relations
-    const module = await this.moduleRepository.findOne({
-      where: { id: moduleId },
-      relations: {
-        domainModules: {
-          domain: true,
-        },
-      },
-    });
-
-    if (!module) {
-      throw new NotFoundException(`Module with ID ${moduleId} not found`);
-    }
-
-    // Map domains from relations
-    return module.domainModules.map((dm) => ({
-      id: dm.domain.id,
-      name: dm.domain.name,
-      description: dm.domain.description,
-    }));
-  }
 }

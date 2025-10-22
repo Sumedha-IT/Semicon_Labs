@@ -1,12 +1,10 @@
 import {
   IsString,
   IsNumber,
-  IsArray,
   IsOptional,
   MaxLength,
   IsIn,
-  Min,
-  Max,
+  IsNotEmpty,
 } from 'class-validator';
 
 export class UpdateModuleDto {
@@ -14,11 +12,6 @@ export class UpdateModuleDto {
   @IsString()
   @MaxLength(200)
   title?: string;
-
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  skills?: string[];
 
   @IsOptional()
   @IsString()
@@ -33,11 +26,9 @@ export class UpdateModuleDto {
   @IsIn(['Beginner', 'Intermediate', 'Advanced'])
   level?: string;
 
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  @Max(100)
-  threshold_score?: number; // Passing threshold score (0-100)
+  @IsNotEmpty()
+  @IsString()
+  reason: string; // Mandatory field for changelog
 
   // Note: Domain associations are updated via separate link/unlink endpoints
 }

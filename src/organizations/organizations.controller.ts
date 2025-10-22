@@ -46,7 +46,7 @@ export class OrganizationsController {
     const organization = await this.organizationsService.create(
       createOrganizationDto,
     );
-    return { org_id: organization.org_id };
+    return { id: organization.id };
   }
 
   // Get all organizations with comprehensive pagination and filtering
@@ -63,8 +63,8 @@ export class OrganizationsController {
         req.user,
       );
 
-    // Return 204 No Content if no results found
-    if (result.pagination.total === 0) {
+    // Return 204 No Content if no data in response
+    if (result.data.length === 0) {
       return res.status(HttpStatus.NO_CONTENT).send();
     }
 
@@ -198,7 +198,7 @@ export class OrganizationsController {
     createUserDto.org_id = orgId;
 
     const user = await this.usersService.create(createUserDto);
-    return { user_id: user.user_id };
+    return { id: user.id };
   }
 
   @Get(':id/users/:userId')
