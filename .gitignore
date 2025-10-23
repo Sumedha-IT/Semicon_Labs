@@ -60,3 +60,5 @@ migrations/
 
 # Backup directory
 backups/
+.prettierrc
+# TEAM_SETUP.md 

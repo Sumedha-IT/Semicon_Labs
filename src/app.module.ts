@@ -1,3 +1,4 @@
+import { QuizModule } from './quiz/quiz.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -49,6 +50,7 @@ import { DocContentsModule } from './doc-contents/doc-contents.module';
     UserTopicsModule,
     ChangelogModule,
     DocContentsModule,
+    QuizModule,
   ],
   controllers: [AppController],
   providers: [AppService],
