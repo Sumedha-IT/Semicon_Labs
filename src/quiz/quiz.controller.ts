@@ -46,12 +46,12 @@ export class QuizController {
     return this.quizService.update(+id, dto, userId);
   }
 
-  @Delete(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.PLATFORM_ADMIN)
-  async remove(@Param('id') id: string) {
-    return this.quizService.remove(+id);
-  }
+  // @Delete(':id')
+  // @UseGuards(JwtAuthGuard, RolesGuard)
+  // @Roles(UserRole.PLATFORM_ADMIN)
+  // async remove(@Param('id') id: string) {
+  //   return this.quizService.remove(+id);
+  // }
 
 
 @UseGuards(JwtAuthGuard, RolesGuard)

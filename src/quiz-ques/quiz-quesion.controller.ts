@@ -9,7 +9,8 @@ import { UserRole } from 'src/common/constants/user-roles';
 import { Roles } from 'src/common/decorator/roles.decorator';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
-import { UnassignOptionsDto, UpdateQuizQuestionDto } from './dtos/update-ques.dto';
+import { ReasonDto, UnassignOptionsDto, UpdateQuizQuestionDto } from './dtos/update-ques.dto';
+import { GetUser } from 'src/common/decorator/get-user.decorator';
 
 @Controller({ path: 'quiz-ques', version: '1' })
 export class QuizQuesionController {
@@ -41,8 +42,9 @@ constructor(private readonly quizQuestionService: QuizQuestionService) {}
   async updateQuestion(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateQuizQuestionDto,
+    @GetUser('userId') userId: number,
   ) {
-    return this.quizQuestionService.updateQuestion(id, dto);
+    return this.quizQuestionService.updateQuestion(id, dto, userId);
   }
 
    // Unassign specific options (or all if body empty)
@@ -51,9 +53,12 @@ constructor(private readonly quizQuestionService: QuizQuestionService) {}
   async unassignOptions(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: UnassignOptionsDto,
+    @GetUser('userId') userId: number,
   ) {
     return this.quizQuestionService.unassignOptionsFromQuestion(
       id,
+      userId,
+      body.reason,
       body?.option_ids,
     );
   }
@@ -61,8 +66,8 @@ constructor(private readonly quizQuestionService: QuizQuestionService) {}
   // Safe delete question (removes associations first)
   @Delete(':id')
   @Roles(UserRole.PLATFORM_ADMIN)
-  async deleteQuestion(@Param('id', ParseIntPipe) id: number) {
-    return this.quizQuestionService.deleteQuestion(id);
+  async deleteQuestion(@Param('id', ParseIntPipe) id: number, @GetUser('userId') userId: number,@Body() body: ReasonDto) {
+    return this.quizQuestionService.deleteQuestion(id, userId, body.reason);
   }
 
 @UseGuards(JwtAuthGuard, RolesGuard)

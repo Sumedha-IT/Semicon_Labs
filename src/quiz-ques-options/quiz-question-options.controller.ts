@@ -21,7 +21,8 @@ import { UserRole } from 'src/common/constants/user-roles';
 import { Roles } from 'src/common/decorator/roles.decorator';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
-import { UpdateQuizOptionDto } from './dtos/update-quiz.dto';
+import { ReasonDto, UpdateQuizOptionDto } from './dtos/update-quiz.dto';
+import { GetUser } from 'src/common/decorator/get-user.decorator';
 
 @Controller({ path: 'ques-opt', version: '1' })
 export class QuizQuestionOptionsController {
@@ -61,13 +62,14 @@ async getOptionById(@Param('id') id: number) {
   async updateOption(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateQuizOptionDto,
+    @GetUser('userId') userId: number,
   ) {
-    return this.quizOptionService.updateOption(id, dto);
+    return this.quizOptionService.updateOption(id, dto, userId);
   }
 
   @Delete(':id')
   @Roles(UserRole.PLATFORM_ADMIN)
-  async deleteOption(@Param('id', ParseIntPipe) id: number) {
-    return this.quizOptionService.deleteOption(id);
+  async deleteOption(@Param('id', ParseIntPipe) id: number,@Body() dto: ReasonDto, @GetUser('userId') userId: number,) {
+    return this.quizOptionService.deleteOption(id, dto.reason, userId);
   }
 }

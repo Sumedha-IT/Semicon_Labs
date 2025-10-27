@@ -68,43 +68,19 @@ export class QuizService {
     return result;
   }
 
-  // async assignQuestions(dto: AssignQuestionsDto) {
-  //   const quiz = await this.quizRepo.findOne({
-  //     where: { id: dto.quiz_id },
-  //     relations: ['questions'],
-  //   });
-  //   if (!quiz) throw new NotFoundException('Quiz not found');
-
-  //   const questions = await this.questionRepo.findByIds(dto.question_ids);
-  //   if (!questions.length)
-  //     throw new NotFoundException('No valid questions found');
-
-  //   // ✅ Link questions to quiz
-  //   for (const question of questions) {
-  //     question.quiz = quiz;
-  //   }
-
-  //   await this.questionRepo.save(questions);
-
-  //   return {
-  //     message: `Assigned ${questions.length} questions to quiz ${quiz.id}`,
-  //     assignedQuestionIds: questions.map((q) => q.id),
-  //   };
-  // }
-
-  async update(id: number, dto: UpdateQuizDto, userId: number) {
+  async update(id: number, quiz_dto: UpdateQuizDto, userId: number) {
     const quiz = await this.findOne(id);
 
     // Extract reason for changelog (don't save it in quiz)
-    // const { reason, ...quizData } = dto;
+    const { reason, ...dto } = quiz_dto;
     Object.assign(quiz, dto);
     await this.quizRepo.save(quiz);
-    // Create changelog entry
+  
     await this.changelogService.createLog({
       changeType: 'quiz',
       changeTypeId: id,
       userId: userId,
-      //   reason,
+      reason,
     });
 
     // Return only id and title
@@ -153,11 +129,11 @@ export class QuizService {
     return await this.quizRepo.find(options);
   }
 
-  async remove(id: number): Promise<{ message: string }> {
-        const quiz = await this.findOne(id);
-        await this.quizRepo.remove(quiz);
-        return { message: `Quiz with ID ${id} has been deleted successfully` };
-    }
+  // async remove(id: number): Promise<{ message: string }> {
+  //       const quiz = await this.findOne(id);
+  //       await this.quizRepo.remove(quiz);
+  //       return { message: `Quiz with ID ${id} has been deleted successfully` };
+  //   }
 
 
 // async assignQuizToModule(quizId: number, moduleId: number) {

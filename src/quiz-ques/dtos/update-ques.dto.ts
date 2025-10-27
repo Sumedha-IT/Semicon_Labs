@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsNumber, IsArray } from 'class-validator';
+import { IsOptional, IsString, IsNumber, IsArray, IsNotEmpty } from 'class-validator';
 
 export class UpdateQuizQuestionDto {
   @IsOptional()
@@ -20,6 +20,10 @@ export class UpdateQuizQuestionDto {
   @IsOptional()
   @IsNumber()
   order_in_quiz?: number;
+
+  @IsNotEmpty()
+  @IsString()
+  reason: string;
 }
 
 export class  UnassignOptionsDto{
@@ -31,4 +35,15 @@ export class  UnassignOptionsDto{
   @IsOptional()
   @IsArray()
   option_ids?: number[];
+
+  
+  @IsNotEmpty()
+  @IsString()
+  reason: string;
+}
+
+export class ReasonDto{
+  @IsNotEmpty()
+  @IsString()
+  reason: string;
 }

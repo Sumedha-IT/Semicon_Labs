@@ -9,6 +9,7 @@ import { In, Repository } from 'typeorm';
 import { AssignOptionsDto, OptionDto } from './dtos/create-quizques-opt.dto';
 import { QuizQuestionOption } from './quiz-question-options.entity';
 import { UpdateQuizOptionDto } from './dtos/update-quiz.dto';
+import { ChangelogService } from 'src/changelog/changelog.service';
 
 @Injectable()
 export class QuizquestionOptionsService {
@@ -18,6 +19,7 @@ export class QuizquestionOptionsService {
 
     @InjectRepository(QuizQuestion)
     private readonly questionRepo: Repository<QuizQuestion>,
+    private readonly changelogService: ChangelogService,
   ) {}
 
   async validateUniqueQues(option_text: string) {
@@ -121,7 +123,7 @@ async assignOptions(dto: AssignOptionsDto) {
 const newCorrectCount = options.filter((opt) => opt.is_correct).length;
 const totalCorrect = existingCorrectCount + newCorrectCount;
 
-if (totalCorrect > 2) {
+if (totalCorrect > 4) {
   throw new BadRequestException(
     `A question can have only up to 2 correct options. Currently total is ${totalCorrect}.`,
   );
@@ -141,7 +143,7 @@ if (totalCorrect === 0) {
     );
   }
 
-  // ✅ Assign and save
+  // Assign and save
   question.options = [...(question.options || []), ...options];
   await this.questionRepo.save(question);
 
@@ -174,51 +176,42 @@ async getOptionById(id: number) {
     return this.optionRepo.find({ where: { question: { id: questionId } } });
   }
 
-  async updateOption(id: number, dto: UpdateQuizOptionDto) {
+  async updateOption(id: number, update_dto: UpdateQuizOptionDto, userId: number) {
     const option = await this.optionRepo.findOne({ where: { id } });
     if (!option) throw new NotFoundException('Option not found');
 
+    const { reason, ...dto } = update_dto;
     Object.assign(option, dto);
+
+    await this.changelogService.createLog({
+      changeType: 'quiz-question-option',
+      changeTypeId: id,
+      userId: userId,
+      reason,
+    });
     return this.optionRepo.save(option);
   }
 
-  async deleteOption(id: number) {
+  async deleteOption(id: number, reason: string, userId: number) {
   const option = await this.optionRepo.findOne({
     where: { id },
     relations: ['question'],
   });
   if (!option) throw new NotFoundException('Option not found');
-
-  // Unlink from questions first (clear relationship)
   if (option.question) {
-    // option?.question = [];
     option.question = null;
     await this.optionRepo.save(option);
   }
 
   // Now remove the option row itself
   await this.optionRepo.remove(option);
-
+   await this.changelogService.createLog({
+      changeType: 'quiz-question-option',
+      changeTypeId: id,
+      userId: userId,
+      reason,
+    });
   return { message: 'Option deleted and mappings removed', id };
 }
-
-
-//   async createAndAssignOptions(dto: OptionDto) {
-//   const question = await this.questionRepo.findOne({
-//     where: { id: dto.quiz_question_id },
-//   });
-//   if (!question) throw new NotFoundException('Question not found');
-
-//   const newOptions = dto.options.map((opt) =>
-//     this.optionRepo.create({
-//       ...opt,
-//       question,
-//     }),
-//   );
-
-//   await this.optionRepo.save(newOptions);
-
-//   return { message: 'Options created & assigned successfully', newOptions };
-// }
 
 }

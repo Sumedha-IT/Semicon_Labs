@@ -47,9 +47,9 @@ export class UpdateQuizDto {
   @IsNumber()
   no_of_questions?: Number;
 
-  // @IsNotEmpty()
-  // @IsString()
-  // reason?: string; // Mandatory field for changelog
+  @IsNotEmpty()
+  @IsString()
+  reason?: string; 
 }
 
 export class AssignQuestionsDto {

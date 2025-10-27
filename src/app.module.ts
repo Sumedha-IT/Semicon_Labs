@@ -1,3 +1,6 @@
+import { ToolModule } from './tool/tool.module';
+import { ToolService } from './tool/tool.service';
+import { ToolController } from './tool/tool.controller';
 import { QuizModule } from './quiz/quiz.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -57,6 +60,7 @@ import { UserQuizResponseModule } from './user-quiz-resp/quiz-resp.module';
     QuizQuestionModule,
     QuizquestionOptionsModule,
     UserQuizResponseModule,
+    ToolModule,
   ],
   controllers: [AppController],
   providers: [AppService],

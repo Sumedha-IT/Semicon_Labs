@@ -115,11 +115,20 @@ export class QuizQuestionService {
     });
   }
  
-  async updateQuestion(id: number, dto: UpdateQuizQuestionDto) {
+  async updateQuestion(id: number, update_dto: UpdateQuizQuestionDto, userId: number) {
     const question = await this.quizQuesRepo.findOne({ where: { id } });
     if (!question) throw new NotFoundException('Question not found');
-
+    const { reason, ...dto } = update_dto;
     Object.assign(question, dto);
+
+     // Create changelog entry
+    await this.changelogService.createLog({
+      changeType: 'quiz-question',
+      changeTypeId: id,
+      userId: userId,
+      reason,
+    });
+
     return this.quizQuesRepo.save(question);
   } 
 
@@ -132,7 +141,7 @@ export class QuizQuestionService {
   // }
 
   // Unassign (unlink) given option IDs (or all) from a question
-  async unassignOptionsFromQuestion(questionId: number, optionIds?: number[]) {
+  async unassignOptionsFromQuestion(questionId: number, userId: number, reason: string, optionIds?: number[]) {
     const question = await this.quizQuesRepo.findOne({
       where: { id: questionId },
       relations: ['options'],
@@ -154,11 +163,18 @@ export class QuizQuestionService {
     }
 
     await this.quizQuesRepo.save(question);
+     // Create changelog entry
+    await this.changelogService.createLog({
+      changeType: 'quiz-question',
+      changeTypeId: questionId,
+      userId: userId,
+      reason,
+    });
     return { message: 'Options unassigned successfully', questionId };
   }
 
   // Safe delete: first unlink all options (so join-table rows removed), then remove question
-  async deleteQuestion(id: number) {
+  async deleteQuestion(id: number, userId: number, reason: string) {
     const question = await this.quizQuesRepo.findOne({
       where: { id },
       relations: {
@@ -169,15 +185,6 @@ export class QuizQuestionService {
     
     if (!question) throw new NotFoundException('Question not found');
     console.log('question options', question);
-
-
-    // // // Unlink all options (clears join table)
-    // if (question.options && question.options.length) {
-    //   question.options = [];
-    //   await this.quizQuesRepo.save(question);
-    // }
-
-
     if (question.options && question.options.length > 0) {
       await this.optionRepo.remove(question.options);
     }
@@ -187,9 +194,13 @@ export class QuizQuestionService {
       question.quiz = null;
       await this.quizQuesRepo.save(question);
     }
-
-    // Now delete the question entity itself
     await this.quizQuesRepo.remove(question);
+    await this.changelogService.createLog({
+      changeType: 'quiz-question-option',
+      changeTypeId: id,
+      userId: userId,
+      reason,
+    });
 
     return { message: 'Question deleted and associations removed', id };
   }
