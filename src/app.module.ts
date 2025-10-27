@@ -19,6 +19,9 @@ import { ModuleTopicsModule } from './module_topics/module-topics.module';
 import { UserTopicsModule } from './user-topics/user-topics.module';
 import { ChangelogModule } from './changelog/changelog.module';
 import { DocContentsModule } from './doc-contents/doc-contents.module';
+import { QuizQuestionModule } from './quiz-ques/quiz-question.module';
+import { QuizquestionOptionsModule } from './quiz-ques-options/quiz-question-options.module';
+import { UserQuizResponseModule } from './user-quiz-resp/quiz-resp.module';
 
 @Module({
   imports: [
@@ -51,6 +54,9 @@ import { DocContentsModule } from './doc-contents/doc-contents.module';
     ChangelogModule,
     DocContentsModule,
     QuizModule,
+    QuizQuestionModule,
+    QuizquestionOptionsModule,
+    UserQuizResponseModule,
   ],
   controllers: [AppController],
   providers: [AppService],

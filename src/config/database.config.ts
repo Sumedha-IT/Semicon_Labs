@@ -13,5 +13,5 @@ export const typeOrmConfig = (cs: ConfigService): TypeOrmModuleOptions => ({
   logging: false,     // Only for development
   retryAttempts: 3,
   retryDelay: 3000,
-  autoLoadEntities: false,
+  autoLoadEntities: true,
 });

@@ -1,4 +1,4 @@
-import { IsOptional, IsString, Length, IsIn, IsNumber, IsBoolean } from 'class-validator';
+import { IsOptional, IsString, Length, IsIn, IsNumber, IsBoolean, IsInt } from 'class-validator';
 
 export class CreateQuizDto {
   @IsString()
@@ -9,9 +9,11 @@ export class CreateQuizDto {
   @IsString()
   desc?: string;
 
+    @IsOptional()
     @IsString()
     quiz_type_id: string
   
+    @IsOptional()
     @IsString()
     // @IsIn(['module', 'topic'])
     quiz_type: string;
@@ -22,14 +24,18 @@ export class CreateQuizDto {
   
     @IsOptional()
     // @IsString()
-    duration: Number;
+    duration: number;
   
     @IsNumber()
-    total_marks: Number;
+    total_marks: number;
+
+    @IsInt()
+    @IsOptional()
+    module_id: number;
   
     @IsBoolean()
     is_Mandatory: Boolean = true;
   
     @IsNumber()
-    no_of_questions: Number;
+    no_of_questions: number;
 } 

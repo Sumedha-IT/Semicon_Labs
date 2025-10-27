@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -8,14 +9,20 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { FindManyOptions, ILike, Repository } from 'typeorm';
 import { ChangelogService } from 'src/changelog/changelog.service';
 import { CreateQuizDto } from './dtos/quiz.dto';
-import { UpdateQuizDto } from './dtos/update-quiz.dto';
+import { AssignQuestionsDto, UpdateQuizDto } from './dtos/update-quiz.dto';
+import { QuizQuestion } from 'src/quiz-ques/quiz-question.entity';
+import { Module as ModuleEntity } from '../modules/entities/module.entity';
 
 @Injectable()
 export class QuizService {
   constructor(
     @InjectRepository(Quiz)
     private readonly quizRepo: Repository<Quiz>,
+    @InjectRepository(QuizQuestion)
+    private readonly questionRepo: Repository<QuizQuestion>,
     private readonly changelogService: ChangelogService,
+     @InjectRepository(ModuleEntity)
+        private readonly moduleRepo: Repository<ModuleEntity>,
   ) {}
 
   async validateUniqueTitle(title: string) {
@@ -30,6 +37,18 @@ export class QuizService {
     await this.validateUniqueTitle(dto.title);
     const quiz = this.quizRepo.create(dto);
     const saveQuiz = await this.quizRepo.save(quiz);
+    if(dto.module_id){
+      const module = await this.moduleRepo.findOne({ where: { id: dto.module_id }, relations: ['quiz'] });
+  if (!module) throw new NotFoundException('Module not found');
+
+  if (module.quiz) {
+    throw new BadRequestException('This module already has a quiz assigned');
+  }
+
+  quiz.module = module;
+  // quiz.module_id = module.id;
+  return this.quizRepo.save(quiz);
+    }
     const result = await this.quizRepo.findOne({
       where: { id: saveQuiz.id },
       select: {
@@ -38,6 +57,7 @@ export class QuizService {
         no_of_questions: true,
         desc: true,
         total_marks: true,
+        module: true,
       },
     });
 
@@ -47,6 +67,30 @@ export class QuizService {
 
     return result;
   }
+
+  // async assignQuestions(dto: AssignQuestionsDto) {
+  //   const quiz = await this.quizRepo.findOne({
+  //     where: { id: dto.quiz_id },
+  //     relations: ['questions'],
+  //   });
+  //   if (!quiz) throw new NotFoundException('Quiz not found');
+
+  //   const questions = await this.questionRepo.findByIds(dto.question_ids);
+  //   if (!questions.length)
+  //     throw new NotFoundException('No valid questions found');
+
+  //   // ✅ Link questions to quiz
+  //   for (const question of questions) {
+  //     question.quiz = quiz;
+  //   }
+
+  //   await this.questionRepo.save(questions);
+
+  //   return {
+  //     message: `Assigned ${questions.length} questions to quiz ${quiz.id}`,
+  //     assignedQuestionIds: questions.map((q) => q.id),
+  //   };
+  // }
 
   async update(id: number, dto: UpdateQuizDto, userId: number) {
     const quiz = await this.findOne(id);
@@ -114,5 +158,24 @@ export class QuizService {
         await this.quizRepo.remove(quiz);
         return { message: `Quiz with ID ${id} has been deleted successfully` };
     }
+
+
+// async assignQuizToModule(quizId: number, moduleId: number) {
+//   const quiz = await this.quizRepo.findOne({ where: { id: quizId } });
+//   if (!quiz) throw new NotFoundException('Quiz not found');
+
+//   const module = await this.moduleRepo.findOne({ where: { id: moduleId }, relations: ['quiz'] });
+//   if (!module) throw new NotFoundException('Module not found');
+
+//   if (module.quiz) {
+//     throw new BadRequestException('This module already has a quiz assigned');
+//   }
+
+//   quiz.module = module;
+//   quiz.moduleId = module.id;
+//   return this.quizRepo.save(quiz);
+// }
+
+
 
 }

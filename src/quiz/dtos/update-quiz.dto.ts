@@ -6,6 +6,7 @@ import {
   IsNotEmpty,
   IsNumber,
   IsBoolean,
+  IsArray,
 } from 'class-validator';
 
 export class UpdateQuizDto {
@@ -49,4 +50,12 @@ export class UpdateQuizDto {
   // @IsNotEmpty()
   // @IsString()
   // reason?: string; // Mandatory field for changelog
+}
+
+export class AssignQuestionsDto {
+  @IsNumber()
+  quiz_id: number;
+
+  @IsArray()
+  question_ids: number[];
 }

@@ -1,7 +1,8 @@
-import { Entity, Column, OneToMany } from 'typeorm';
+import { Entity, Column, OneToMany, JoinColumn, OneToOne } from 'typeorm';
 import { BaseEntity } from '../../common/entities/base.entity';
 import { DomainModule } from '../../domain-modules/entities/domain-module.entity';
 import { ModuleTopic } from '../../module_topics/entities/module-topic.entity';
+import { Quiz } from 'src/quiz/quiz.entity';
 
 @Entity({ name: 'modules' })
 export class Module extends BaseEntity {
@@ -24,4 +25,8 @@ export class Module extends BaseEntity {
   // Many-to-many relationship with topics through module_topics join table
   @OneToMany(() => ModuleTopic, (moduleTopic) => moduleTopic.module)
   moduleTopics: ModuleTopic[];
+
+  @OneToOne(() => Quiz, quiz => quiz.module, { cascade: true, eager: false })
+  @JoinColumn()
+  quiz: Quiz;
 }
