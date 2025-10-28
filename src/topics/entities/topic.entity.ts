@@ -1,9 +1,16 @@
-import { Entity, Column, Index, OneToMany } from 'typeorm';
-import { BaseEntity } from '../../common/entities/base.entity';
-import { ModuleTopic } from '../../module_topics/entities/module-topic.entity';
+import { Entity, Column, Index, OneToMany, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { ModuleTopic } from '../../module-topics/entities/module-topic.entity';
 
 @Entity({ name: 'topics' })
-export class Topic extends BaseEntity {
+export class Topic {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @CreateDateColumn({ name: 'created_on', type: 'timestamptz' })
+  created_on: Date;
+
+  @UpdateDateColumn({ name: 'updated_on', type: 'timestamptz' })
+  updated_on: Date;
   @Index({ unique: true })
   @Column({ length: 200 })
   title: string;

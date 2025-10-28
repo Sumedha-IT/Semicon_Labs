@@ -21,6 +21,7 @@ import { Response } from 'express';
 import { OrganizationsService } from './organizations.service';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
+import { validateOrganizationFieldAuthorization } from '../common/utils/field-authorization.helper';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorator/roles.decorator';
@@ -30,6 +31,8 @@ import { CreateUserDto } from '../users/dto/create-user.dto';
 import { UpdateUserDto } from '../users/dto/update-user.dto';
 import { OrganizationQueryDto } from './dto/organization-query.dto';
 import { PaginatedResponseDto } from '../users/dto/paginated-response.dto';
+import { UserQueryDto } from '../users/dto/user-query.dto';
+import { validateUserFieldAuthorization } from '../common/utils/field-authorization.helper';
 
 @Controller({ path: 'organizations', version: '1' })
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -113,6 +116,12 @@ export class OrganizationsController {
   ) {
     const orgId = +id;
 
+    // Validate field-level authorization
+    validateOrganizationFieldAuthorization(
+      updateOrganizationDto,
+      req.user.role as UserRole,
+    );
+
     // PlatformAdmin can update any organization
     if (req.user.role === UserRole.PLATFORM_ADMIN) {
       await this.organizationsService.update(orgId, updateOrganizationDto);
@@ -128,27 +137,6 @@ export class OrganizationsController {
     throw new ForbiddenException('Not authorized to update this organization');
   }
 
-  @Delete(':id')
-  @Roles(UserRole.PLATFORM_ADMIN)
-  @HttpCode(HttpStatus.OK)
-  remove(@Param('id') id: string) {
-    // Map service result to appropriate HTTP semantics
-    return this.organizationsService.remove(+id).then((result) => {
-      if (!result.success) {
-        if (result.message === 'Organization not found') {
-          throw new NotFoundException(result.message);
-        }
-        if (result.message === 'Organization is already deleted') {
-          throw new ConflictException(result.message);
-        }
-        // When users exist, block deletion with conflict
-        if (result.message?.startsWith('Cannot delete organization.')) {
-          throw new ConflictException(result.message);
-        }
-      }
-      return result; // { success: true, message: 'Organization soft deleted successfully' }
-    });
-  }
 
   // User management endpoints for organizations
   @Get(':id/users')
@@ -157,6 +145,7 @@ export class OrganizationsController {
     @Param('id') id: string,
     @Request() req,
     @Res() res: Response,
+    @Query() queryDto: UserQueryDto,
   ) {
     const orgId = +id;
 
@@ -167,7 +156,33 @@ export class OrganizationsController {
       );
     }
 
-    const users = await this.usersService.findByOrganization(orgId);
+    // Create a modified requesting user for the query
+    const modifiedReqUser = {
+      ...req.user,
+      orgId: orgId,
+    };
+
+    // If query parameters are provided, use advanced search/filtering
+    if (queryDto.search || queryDto.role || queryDto.location || queryDto.deviceNo || 
+        queryDto.toolId || queryDto.managerId || queryDto.active !== undefined ||
+        queryDto.joinedAfter || queryDto.joinedBefore || queryDto.updatedAfter || 
+        queryDto.updatedBefore || queryDto.phone || queryDto.deleted !== undefined) {
+      
+      const result = await this.usersService.findOrganizationUsersWithPagination(
+        queryDto,
+        modifiedReqUser,
+      );
+
+      // Return 204 No Content if no data in response
+      if (result.data.length === 0) {
+        return res.status(HttpStatus.NO_CONTENT).send();
+      }
+
+      return res.status(HttpStatus.OK).json(result);
+    }
+
+    // Default behavior - get all users in organization
+    const users = await this.usersService.findByOrganizationWithoutDetails(orgId);
 
     // Return 204 No Content if no results found
     if (users.length === 0) {
@@ -184,6 +199,7 @@ export class OrganizationsController {
     @Param('id') id: string,
     @Body() createUserDto: CreateUserDto,
     @Request() req,
+    @Query() queryDto: UserQueryDto,
   ) {
     const orgId = +id;
 
@@ -194,8 +210,18 @@ export class OrganizationsController {
       );
     }
 
-    // Set the organization ID
-    createUserDto.org_id = orgId;
+    // If org_id is provided in the request body, use it; otherwise set to organization ID
+    if (createUserDto.org_id) {
+      // User belongs to organization - validate it matches the organization ID
+      if (createUserDto.org_id !== orgId) {
+        throw new BadRequestException(
+          'Organization ID in request body must match the organization ID in URL',
+        );
+      }
+    } else {
+      // Set the organization ID for organization users
+      createUserDto.org_id = orgId;
+    }
 
     const user = await this.usersService.create(createUserDto);
     return { id: user.id };
@@ -208,7 +234,7 @@ export class OrganizationsController {
     UserRole.MANAGER,
     UserRole.LEARNER,
   )
-  getOrganizationUser(
+  async getOrganizationUser(
     @Param('id') id: string,
     @Param('userId') userId: string,
     @Request() req,
@@ -232,7 +258,15 @@ export class OrganizationsController {
       throw new ForbiddenException('Not authorized to access this user');
     }
 
-    return this.usersService.findOneInOrganization(userIdNum, orgId);
+    const user = await this.usersService.findOneInOrganizationWithoutDetails(userIdNum, orgId);
+    
+    if (!user) {
+      throw new NotFoundException(
+        `User with ID ${userIdNum} not found in organization ${orgId}`
+      );
+    }
+
+    return user;
   }
 
   @Patch(':id/users/:userId')
@@ -259,18 +293,28 @@ export class OrganizationsController {
       throw new ForbiddenException('Not authorized to update this user');
     }
 
-    await this.usersService.updateInOrganization(
+    // Validate field-level authorization
+    const isSelfUpdate = userIdNum === req.user.userId;
+    const userRole = req.user.role; // Get role as-is (string or enum)
+    
+    validateUserFieldAuthorization(
+      updateUserDto,
+      userRole,
+      isSelfUpdate,
+    );
+
+    const updatedUser = await this.usersService.updateInOrganization(
       userIdNum,
       orgId,
       updateUserDto,
     );
+
     return { user_id: userIdNum };
   }
 
   @Delete(':id/users/:userId')
   @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN)
-  @HttpCode(HttpStatus.NO_CONTENT)
-  removeOrganizationUser(
+  async removeOrganizationUser(
     @Param('id') id: string,
     @Param('userId') userId: string,
     @Request() req,
@@ -285,7 +329,13 @@ export class OrganizationsController {
       );
     }
 
-    return this.usersService.removeFromOrganization(userIdNum, orgId);
+    const result = await this.usersService.removeFromOrganization(userIdNum, orgId);
+    
+    if (!result.success) {
+      throw new BadRequestException(result.message);
+    }
+
+    return { message: result.message };
   }
 
   // Search and filter operations for organization users

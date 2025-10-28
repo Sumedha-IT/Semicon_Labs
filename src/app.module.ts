@@ -12,12 +12,14 @@ import { OrganizationsModule } from './organizations/organizations.module';
 import { DomainsModule } from './domains/domains.module';
 import { ModulesModule } from './modules/modules.module';
 import { DomainModulesModule } from './domain-modules/domain-modules.module';
-import { UserModulesModule } from './user-modules/user-modules.module';
+// UserModulesModule removed - functionality moved to ModulesController
 import { TopicsModule } from './topics/topics.module';
-import { ModuleTopicsModule } from './module_topics/module-topics.module';
+import { ModuleTopicsModule } from './module-topics/module-topics.module';
 import { UserTopicsModule } from './user-topics/user-topics.module';
 import { ChangelogModule } from './changelog/changelog.module';
 import { DocContentsModule } from './doc-contents/doc-contents.module';
+import { MailModule } from './mail/mail.module';
+import { RateLimiterModule } from './rate-limiter/rate-limiter.module';
 
 @Module({
   imports: [
@@ -43,12 +45,13 @@ import { DocContentsModule } from './doc-contents/doc-contents.module';
     DomainsModule,
     ModulesModule,
     DomainModulesModule,
-    UserModulesModule,
     TopicsModule,
     ModuleTopicsModule,
     UserTopicsModule,
     ChangelogModule,
     DocContentsModule,
+    MailModule,
+    RateLimiterModule,
   ],
   controllers: [AppController],
   providers: [AppService],

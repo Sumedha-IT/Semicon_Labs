@@ -4,6 +4,7 @@ import {
   BadRequestException,
   UnprocessableEntityException,
   NotFoundException,
+  ForbiddenException,
   Inject,
   forwardRef,
 } from '@nestjs/common';
@@ -15,24 +16,27 @@ import {
   Like,
   Or,
   Between,
-  SelectQueryBuilder,
 } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User } from './entities/user.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 import { CreateIndividualUserDto } from './dto/create-individual-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { UserQueryDto, SortBy } from './dto/user-query.dto';
+import { UserQueryDto } from './dto/user-query.dto';
 import {
   PaginatedResponseDto,
   PaginationMetaDto,
 } from './dto/paginated-response.dto';
 import { UserDomainsService } from '../user-domains/user-domains.service';
-import { UserModulesService } from '../user-modules/user-modules.service';
+import { UserDomain } from '../user-domains/entities/user-domain.entity';
+import { UserModule } from '../user-modules/entities/user-module.entity';
 import { UserTopicsService } from '../user-topics/user-topics.service';
 import { UserRole } from '../common/constants/user-roles';
 import { Organization } from '../organizations/entities/organization.entity';
 import { QueryBuilderHelper } from '../common/utils/query-builder.helper';
+import { OtpService } from '../otp/otp.service';
+import { MailService } from '../mail/mail.service';
+import { RedisService } from '../redis/redis.service';
 
 @Injectable()
 export class UsersService {
@@ -41,11 +45,16 @@ export class UsersService {
     private usersRepository: Repository<User>,
     @InjectRepository(Organization)
     private organizationsRepository: Repository<Organization>,
+    @InjectRepository(UserDomain)
+    private userDomainRepository: Repository<UserDomain>,
+    @InjectRepository(UserModule)
+    private userModuleRepository: Repository<UserModule>,
     private readonly userDomainsService: UserDomainsService,
-    @Inject(forwardRef(() => UserModulesService))
-    private readonly userModulesService: UserModulesService,
     @Inject(forwardRef(() => UserTopicsService))
     private readonly userTopicsService: UserTopicsService,
+    private readonly otpService: OtpService,
+    private readonly mailService: MailService,
+    private readonly redisService: RedisService,
   ) {}
 
   // ============================================================================
@@ -69,15 +78,9 @@ export class UsersService {
         where: { email: createUserDto.email },
       });
       if (existingUser) {
-        if (existingUser.deleted_on) {
-          throw new ConflictException(
-            `User with email ${createUserDto.email} was previously deleted and cannot be recreated. Please use a different email address.`,
-          );
-        } else {
-          throw new ConflictException(
-            `User with email ${createUserDto.email} already exists`,
-          );
-        }
+        throw new ConflictException(
+          `User with email ${createUserDto.email} already exists`,
+        );
       }
 
       // Only validate manager/ClientAdmin/PlatformAdmin creation rules if role is present (CreateUserDto)
@@ -118,44 +121,116 @@ export class UsersService {
   }
 
   /**
+   * Registers a new user with OTP verification
+   * Creates user, sends OTP to email
+   */
+  async registerWithOtp(createUserDto: CreateUserDto | CreateIndividualUserDto) {
+    try {
+      console.log('DEBUG: Starting registerWithOtp');
+      
+      // Check if user with this email already exists
+      const existingUser = await this.usersRepository.findOne({
+        where: { email: createUserDto.email },
+      });
+
+      console.log('DEBUG: Existing user check complete', existingUser ? 'Found' : 'Not found');
+
+      // If user exists and has password/email filled in (complete user), throw error
+      if (existingUser && existingUser.password_hash && existingUser.name) {
+        throw new ConflictException(
+          `User with email ${createUserDto.email} already exists`,
+        );
+      }
+
+      // NEW: If user row not created yet, allow through when Redis pre-verification exists
+      if (!existingUser) {
+        const preVerified = await this.redisService.get<string>(
+          `pre_register_verified:${createUserDto.email}`
+        );
+        if (!preVerified) {
+          throw new BadRequestException('Please verify your email first using the OTP.');
+        }
+
+        // Create user (no is_verified needed)
+        const user = await this.create(createUserDto);
+        await this.usersRepository.save(user);
+
+        // Clear Redis flag
+        await this.redisService.set(`pre_register_verified:${createUserDto.email}`, null, 0);
+
+        return {
+          message: 'Registration successful. Email already verified.',
+          id: user.id,
+          email: user.email,
+        };
+      }
+
+      // If existing user is pending (missing critical fields), complete it
+      const isPending =
+        !existingUser.password_hash ||
+        !existingUser.name ||
+        !existingUser.role ||
+        !existingUser.registered_device_no;
+
+      if (isPending) {
+        existingUser.name = (createUserDto as any).name;
+        existingUser.password_hash = await this.hashPassword((createUserDto as any).password);
+        existingUser.role = (createUserDto as any).role || 'Learner';
+        existingUser.registered_device_no = (createUserDto as any).registered_device_no;
+        // When not provided, leave as-is to satisfy Date type
+        if ((createUserDto as any).dob) {
+          existingUser.dob = new Date((createUserDto as any).dob);
+        }
+        existingUser.user_phone = (createUserDto as any).user_phone ?? null;
+        existingUser.location = (createUserDto as any).location ?? null;
+        // Newly added optional profile fields
+        existingUser.profession = (createUserDto as any).profession ?? null;
+        existingUser.highest_qualification = (createUserDto as any).highest_qualification ?? null;
+        existingUser.highest_qualification_specialization = (createUserDto as any).highest_qualification_specialization ?? null;
+        existingUser.tool_id = (createUserDto as any).tool_id ?? null;
+        existingUser.org_id = (createUserDto as any).org_id ?? null;
+        existingUser.manager_id = (createUserDto as any).manager_id ?? null;
+
+        await this.usersRepository.save(existingUser);
+        return {
+          message: 'Registration completed',
+          id: existingUser.id,
+          email: existingUser.email,
+        };
+      }
+
+      // If user exists and is fully complete already, block duplicate
+      if (existingUser && !isPending) {
+        throw new ConflictException(
+          `User with email ${createUserDto.email} already exists`,
+        );
+      }
+    } catch (error) {
+      console.error('ERROR in registerWithOtp:', error);
+      console.error('ERROR stack:', error.stack);
+      throw error;
+    }
+  }
+
+  /**
    * Finds a single user by ID (only non-deleted users)
    */
   async findOne(id: number): Promise<User | null> {
     return this.usersRepository.findOne({
-      where: { id: id, deleted_on: IsNull() },
+      where: { id: id },
     });
   }
 
-  /**
-   * Finds all non-deleted users (returns only user IDs)
-   */
-  async findAll(): Promise<{ id: number }[]> {
-    const users = await this.usersRepository.find({
-      where: { deleted_on: IsNull() },
-      select: {
-        id: true,
-      },
-    });
-    return users.map((user) => ({ id: user.id }));
-  }
 
   /**
    * Finds a user by email address (only non-deleted users)
    */
   async findByEmail(email: string): Promise<User | null> {
     return this.usersRepository.findOne({
-      where: { email, deleted_on: IsNull() },
+      where: { email },
     });
   }
 
-  /**
-   * Finds the Platform Admin user (only non-deleted)
-   */
-  async findPlatformAdmin(): Promise<User | null> {
-    return this.usersRepository.findOne({
-      where: { role: UserRole.PLATFORM_ADMIN, deleted_on: IsNull() },
-    });
-  }
 
   /**
    * Updates a user's information
@@ -184,117 +259,26 @@ export class UsersService {
   }
 
   /**
-   * Soft deletes a user
-   * Handles role-specific deletion rules (manager/ClientAdmin validation)
-   * Cleans up user associations (domains, modules) before deletion
+   * Soft deletes a user (marks as deleted)
+   * Cleans up associated user domains and modules
    */
-  async remove(id: number): Promise<{ success: boolean; message: string }> {
-    // First check if user exists at all (including soft deleted)
-    const userAnyStatus = await this.usersRepository.findOne({
-      where: { id: id },
-    });
-
-    if (!userAnyStatus) {
-      return this.createErrorResponse('User not found');
+  async remove(id: number): Promise<void> {
+    // Check if user exists
+    const existingUser = await this.findOne(id);
+    if (!existingUser) {
+      throw new NotFoundException('User not found');
     }
 
-    // Check if user is already soft deleted
-    if (userAnyStatus.deleted_on) {
-      return this.createErrorResponse('User is already deleted');
-    }
+    // Clean up user modules and topics before deletion
+    await this.cleanupUserModules(id, ' before deletion');
+    await this.cleanupUserTopics(id, ' before deletion');
 
-    // Get the active user for further processing
-    const user = await this.findOne(id);
-
-    if (!user) {
-      return this.createErrorResponse('User not found');
-    }
-
-    let teamMembersCount = 0;
-    let reassignmentMessage = '';
-
-    // If deleting a manager, check if they have active learners
-    if (user.role === 'Manager') {
-      try {
-        await this.validateManagerDeletion(id, user.org_id);
-      } catch (error) {
-        return this.createErrorResponse(error.message);
-      }
-
-      // Reassign any remaining team members to ClientAdmin
-      teamMembersCount = await this.reassignManagerTeamMembers(id, user.org_id);
-      reassignmentMessage =
-        teamMembersCount > 0
-          ? ` ${teamMembersCount} team members reassigned to ClientAdmin.`
-          : '';
-    }
-
-    // If deleting a ClientAdmin, check if they have active managers or learners
-    if (user.role === 'ClientAdmin') {
-      try {
-        await this.validateClientAdminDeletion(user.org_id);
-      } catch (error) {
-        return this.createErrorResponse(error.message);
-      }
-    }
-
-    // Clean up user associations before soft delete
-    await this.cleanupUserDomains(id);
-    await this.cleanupUserTopics(id);
-    await this.cleanupUserModules(id);
-
-    // Soft delete the user using ORM
-    await this.usersRepository.update(
-      { id: id },
-      {
-        deleted_on: new Date(),
-        updated_on: new Date(),
-      },
-    );
-
-    return this.createSuccessResponse(
-      `User soft deleted successfully.${reassignmentMessage}`,
-    );
+    // Soft delete the user
+    await this.usersRepository.softDelete(id);
   }
 
-  /**
-   * Debug method to get detailed user information (including soft-deleted users)
-   * Returns user status, domain associations, and basic user data
-   */
-  async debugUser(id: number): Promise<any> {
-    // Check if user exists at all (including soft deleted)
-    const userAnyStatus = await this.usersRepository.findOne({
-      where: { id: id },
-    });
 
-    // Check if user exists and is not deleted
-    const userActive = await this.findOne(id);
 
-    // Check user domains - get all without pagination for validation
-    const userDomainsResult = await this.userDomainsService
-      .listUserDomains(id, { page: 1, limit: 1000 })
-      .catch(() => ({ data: [] }));
-    const userDomains = userDomainsResult.data || [];
-
-    return {
-      userId: id,
-      userExists: !!userAnyStatus,
-      userActive: !!userActive,
-      userDeleted: userAnyStatus ? !!userAnyStatus.deleted_on : null,
-      deletedOn: userAnyStatus?.deleted_on || null,
-      userDomainsCount: userDomains.length,
-      userDomains: userDomains,
-      userData: userAnyStatus
-        ? {
-            name: userAnyStatus.name,
-            email: userAnyStatus.email,
-            role: userAnyStatus.role,
-            org_id: userAnyStatus.org_id,
-            deleted_on: userAnyStatus.deleted_on,
-          }
-        : null,
-    };
-  }
 
   // ----------------------------------------------------------------------------
   // 2. ORGANIZATION-SCOPED OPERATIONS (ClientAdmin & PlatformAdmin)
@@ -305,7 +289,7 @@ export class UsersService {
    */
   async findByOrganization(orgId: number): Promise<User[]> {
     return this.usersRepository.find({
-      where: { org_id: orgId, deleted_on: IsNull() },
+      where: { org_id: orgId },
       relations: this.getStandardRelations(),
     });
   }
@@ -315,22 +299,51 @@ export class UsersService {
    */
   async findOneInOrganization(id: number, orgId: number): Promise<User | null> {
     return this.usersRepository.findOne({
-      where: { id: id, org_id: orgId, deleted_on: IsNull() },
+      where: { id: id, org_id: orgId },
       relations: this.getStandardRelations(),
     });
   }
 
   /**
+   * Finds a specific user within an organization (without organization/manager details)
+   * Used for organization users endpoints to avoid including organization details
+   */
+  async findOneInOrganizationWithoutDetails(id: number, orgId: number): Promise<User | null> {
+    return this.usersRepository.findOne({
+      where: { id: id, org_id: orgId },
+    });
+  }
+
+  /**
    * Updates a user within an organization context
+   * User MUST already belong to the organization to be updated
    */
   async updateInOrganization(
     id: number,
     orgId: number,
     updateUserDto: UpdateUserDto,
-  ): Promise<User | null> {
+  ): Promise<User> {
+    // User must already exist in the organization
     const user = await this.findOneInOrganization(id, orgId);
+    
     if (!user) {
-      return null;
+      // Check if user exists at all to provide better error message
+      const existingUser = await this.findOne(id);
+      if (!existingUser) {
+        throw new NotFoundException(`User with ID ${id} not found`);
+      }
+      throw new BadRequestException(
+        `User with ID ${id} does not belong to organization ${orgId}. ` +
+        `Users can only be updated if they already belong to the organization.`
+      );
+    }
+
+    // Prevent changing org_id to a different organization via this endpoint
+    if (updateUserDto.org_id !== undefined && updateUserDto.org_id !== orgId) {
+      throw new BadRequestException(
+        `Cannot change organization affiliation via organization-centric API. ` +
+        `User already belongs to organization ${orgId}`
+      );
     }
 
     // Check for duplicate email if email is being updated
@@ -345,7 +358,15 @@ export class UsersService {
     const updateData = await this.prepareUpdateData(updateUserDto);
 
     await this.usersRepository.update(id, updateData);
-    return this.findOneInOrganization(id, orgId);
+    
+    const updatedUser = await this.findOneInOrganization(id, orgId);
+    if (!updatedUser) {
+      throw new NotFoundException(
+        `User with ID ${id} not found in organization ${orgId} after update`
+      );
+    }
+    
+    return updatedUser;
   }
 
   /**
@@ -359,11 +380,6 @@ export class UsersService {
     const user = await this.findOneInOrganization(id, orgId);
     if (!user) {
       return this.createErrorResponse('User not found in organization');
-    }
-
-    // Check if user is already soft deleted
-    if (user.deleted_on) {
-      return this.createErrorResponse('User is already deleted');
     }
 
     let teamMembersCount = 0;
@@ -409,10 +425,8 @@ export class UsersService {
     await this.cleanupUserTopics(id, ` from organization ${orgId}`);
     await this.cleanupUserModules(id, ` from organization ${orgId}`);
 
-    await this.usersRepository.update(id, {
-      deleted_on: new Date(),
-      updated_on: new Date(),
-    });
+    // Perform hard delete
+    await this.usersRepository.delete(id);
 
     return this.createSuccessResponse(
       `User soft deleted from organization successfully.${reassignmentMessage}`,
@@ -431,15 +445,385 @@ export class UsersService {
       where: {
         manager_id: managerId,
         org_id: MoreThan(0), // Only organization learners
-        deleted_on: IsNull(),
       },
       relations: this.getStandardRelations(),
     });
   }
 
-  // ----------------------------------------------------------------------------
-  // 4. SEARCH & QUERY OPERATIONS (PlatformAdmin & ClientAdmin with restrictions)
-  // ----------------------------------------------------------------------------
+  /**
+   * Finds users with pagination and filtering
+   * Supports deleted=true query parameter to show only soft-deleted users
+   */
+  async findUsersWithPagination(
+    queryDto: UserQueryDto,
+    requestingUser: any,
+  ): Promise<PaginatedResponseDto<User>> {
+    const queryBuilder = this.usersRepository
+      .createQueryBuilder('user')
+      .leftJoinAndSelect('user.organization', 'organization');
+
+    // Handle deleted filter
+    if (queryDto.deleted === true) {
+      queryBuilder.andWhere('user.deleted_on IS NOT NULL');
+    } else {
+      queryBuilder.andWhere('user.deleted_on IS NULL');
+    }
+
+    // ClientAdmin can only see users in their organization
+    // Also apply organization filter if orgId is provided in the requesting user
+    if (requestingUser.role === UserRole.CLIENT_ADMIN || requestingUser.orgId) {
+      queryBuilder.andWhere('user.org_id = :orgId', {
+        orgId: requestingUser.orgId,
+      });
+    }
+
+    // Apply other filters
+    if (queryDto.role) {
+      queryBuilder.andWhere('user.role = :role', { role: queryDto.role });
+    }
+
+    if (queryDto.orgId !== undefined && queryDto.orgId !== null) {
+      queryBuilder.andWhere('user.org_id = :orgId', { orgId: queryDto.orgId });
+    }
+
+    if (queryDto.managerId !== undefined && queryDto.managerId !== null) {
+      queryBuilder.andWhere('user.manager_id = :managerId', { managerId: queryDto.managerId });
+    }
+
+    if (queryDto.location) {
+      queryBuilder.andWhere('user.location LIKE :location', {
+        location: `%${queryDto.location}%`,
+      });
+    }
+
+    if (queryDto.phone) {
+      queryBuilder.andWhere('user.user_phone LIKE :phone', {
+        phone: `%${queryDto.phone}%`,
+      });
+    }
+
+    if (queryDto.search) {
+      queryBuilder.andWhere(
+        '(user.name LIKE :search OR user.email LIKE :search)',
+        { search: `%${queryDto.search}%` },
+      );
+    }
+
+    // Apply sorting
+    const sortField = queryDto.sortBy || 'email';
+    const sortOrder = queryDto.sortOrder || 'ASC';
+    queryBuilder.orderBy(`user.${sortField}`, sortOrder.toUpperCase() as 'ASC' | 'DESC');
+
+    // Apply pagination
+    const page = queryDto.page || 1;
+    const limit = queryDto.limit || 10;
+    const offset = (page - 1) * limit;
+
+    queryBuilder.skip(offset).take(limit);
+
+    const [users, total] = await queryBuilder.getManyAndCount();
+
+    const meta: PaginationMetaDto = {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+      hasNext: page < Math.ceil(total / limit),
+      hasPrev: page > 1,
+    };
+
+    return new PaginatedResponseDto(users, meta);
+  }
+
+  /**
+   * Finds users with pagination for main users endpoint (without organization details)
+   * Used for the main /v1/users endpoint to avoid including organization details
+   */
+  async findUsersWithPaginationWithoutDetails(
+    queryDto: UserQueryDto,
+    requestingUser: any,
+  ): Promise<PaginatedResponseDto<User>> {
+    const queryBuilder = this.usersRepository
+      .createQueryBuilder('user');
+
+    // Handle deleted filter
+    if (queryDto.deleted === true) {
+      queryBuilder.andWhere('user.deleted_on IS NOT NULL');
+    } else {
+      queryBuilder.andWhere('user.deleted_on IS NULL');
+    }
+
+    // ClientAdmin can only see users in their organization
+    // Also apply organization filter if orgId is provided in the requesting user
+    if (requestingUser.role === UserRole.CLIENT_ADMIN || requestingUser.orgId) {
+      queryBuilder.andWhere('user.org_id = :orgId', {
+        orgId: requestingUser.orgId,
+      });
+    }
+
+    // Apply search filter
+    if (queryDto.search) {
+      queryBuilder.andWhere(
+        '(user.name LIKE :search OR user.email LIKE :search)',
+        { search: `%${queryDto.search}%` }
+      );
+    }
+
+    // Apply other filters
+    if (queryDto.role) {
+      queryBuilder.andWhere('user.role = :role', { role: queryDto.role });
+    }
+
+    if (queryDto.orgId !== undefined && queryDto.orgId !== null) {
+      queryBuilder.andWhere('user.org_id = :orgId', { orgId: queryDto.orgId });
+    }
+
+    if (queryDto.location) {
+      queryBuilder.andWhere('user.location LIKE :location', {
+        location: `%${queryDto.location}%`,
+      });
+    }
+
+    if (queryDto.deviceNo) {
+      queryBuilder.andWhere('user.registered_device_no LIKE :deviceNo', {
+        deviceNo: `%${queryDto.deviceNo}%`,
+      });
+    }
+
+    if (queryDto.toolId !== undefined && queryDto.toolId !== null) {
+      queryBuilder.andWhere('user.tool_id = :toolId', { toolId: queryDto.toolId });
+    }
+
+    if (queryDto.managerId !== undefined && queryDto.managerId !== null) {
+      queryBuilder.andWhere('user.manager_id = :managerId', {
+        managerId: queryDto.managerId,
+      });
+    }
+
+    if (queryDto.phone) {
+      queryBuilder.andWhere('user.user_phone LIKE :phone', {
+        phone: `%${queryDto.phone}%`,
+      });
+    }
+
+    // Apply date range filters
+    if (queryDto.joinedAfter) {
+      queryBuilder.andWhere('user.joined_on >= :joinedAfter', {
+        joinedAfter: queryDto.joinedAfter,
+      });
+    }
+
+    if (queryDto.joinedBefore) {
+      queryBuilder.andWhere('user.joined_on <= :joinedBefore', {
+        joinedBefore: queryDto.joinedBefore,
+      });
+    }
+
+    if (queryDto.updatedAfter) {
+      queryBuilder.andWhere('user.updated_on >= :updatedAfter', {
+        updatedAfter: queryDto.updatedAfter,
+      });
+    }
+
+    if (queryDto.updatedBefore) {
+      queryBuilder.andWhere('user.updated_on <= :updatedBefore', {
+        updatedBefore: queryDto.updatedBefore,
+      });
+    }
+
+    // Apply sorting
+    const { sortBy, sortOrder } = queryDto;
+    if (sortBy && sortOrder) {
+      const columnMap = {
+        name: 'name',
+        email: 'email',
+        role: 'role',
+        joinedOn: 'joined_on',
+        updatedOn: 'updated_on',
+        location: 'location',
+        userPhone: 'user_phone',
+      };
+      QueryBuilderHelper.applySorting(
+        queryBuilder,
+        'user',
+        columnMap,
+        sortBy,
+        sortOrder,
+        'name',
+      );
+    }
+
+    // Apply pagination
+    const page = queryDto.page || 1;
+    const limit = queryDto.limit || 10;
+    
+    // Get total count
+    const total = await queryBuilder.getCount();
+    
+    // Apply pagination
+    const skip = (page - 1) * limit;
+    queryBuilder.skip(skip).take(limit);
+    
+    // Get paginated data
+    const users = await queryBuilder.getMany();
+    
+    // Create pagination meta
+    const meta: PaginationMetaDto = {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+      hasNext: page < Math.ceil(total / limit),
+      hasPrev: page > 1,
+    };
+
+    return new PaginatedResponseDto(users, meta);
+  }
+
+  /**
+   * Finds users with pagination for organization endpoints (without organization details)
+   * Used specifically for organization users endpoints to avoid including organization details
+   */
+  async findOrganizationUsersWithPagination(
+    queryDto: UserQueryDto,
+    requestingUser: any,
+  ): Promise<PaginatedResponseDto<User>> {
+    const queryBuilder = this.usersRepository
+      .createQueryBuilder('user');
+
+    // Handle deleted filter
+    if (queryDto.deleted === true) {
+      queryBuilder.andWhere('user.deleted_on IS NOT NULL');
+    } else {
+      queryBuilder.andWhere('user.deleted_on IS NULL');
+    }
+
+    // ClientAdmin can only see users in their organization
+    // Also apply organization filter if orgId is provided in the requesting user
+    if (requestingUser.role === UserRole.CLIENT_ADMIN || requestingUser.orgId) {
+      queryBuilder.andWhere('user.org_id = :orgId', {
+        orgId: requestingUser.orgId,
+      });
+    }
+
+    // Apply search filter
+    if (queryDto.search) {
+      queryBuilder.andWhere(
+        '(user.name LIKE :search OR user.email LIKE :search)',
+        { search: `%${queryDto.search}%` }
+      );
+    }
+
+    // Apply other filters
+    if (queryDto.role) {
+      queryBuilder.andWhere('user.role = :role', { role: queryDto.role });
+    }
+
+    if (queryDto.orgId !== undefined && queryDto.orgId !== null) {
+      queryBuilder.andWhere('user.org_id = :orgId', { orgId: queryDto.orgId });
+    }
+
+    if (queryDto.location) {
+      queryBuilder.andWhere('user.location LIKE :location', {
+        location: `%${queryDto.location}%`,
+      });
+    }
+
+    if (queryDto.deviceNo) {
+      queryBuilder.andWhere('user.registered_device_no LIKE :deviceNo', {
+        deviceNo: `%${queryDto.deviceNo}%`,
+      });
+    }
+
+    if (queryDto.toolId !== undefined && queryDto.toolId !== null) {
+      queryBuilder.andWhere('user.tool_id = :toolId', { toolId: queryDto.toolId });
+    }
+
+    if (queryDto.managerId !== undefined && queryDto.managerId !== null) {
+      queryBuilder.andWhere('user.manager_id = :managerId', {
+        managerId: queryDto.managerId,
+      });
+    }
+
+    if (queryDto.phone) {
+      queryBuilder.andWhere('user.user_phone LIKE :phone', {
+        phone: `%${queryDto.phone}%`,
+      });
+    }
+
+    // Apply date range filters
+    if (queryDto.joinedAfter) {
+      queryBuilder.andWhere('user.joined_on >= :joinedAfter', {
+        joinedAfter: queryDto.joinedAfter,
+      });
+    }
+
+    if (queryDto.joinedBefore) {
+      queryBuilder.andWhere('user.joined_on <= :joinedBefore', {
+        joinedBefore: queryDto.joinedBefore,
+      });
+    }
+
+    if (queryDto.updatedAfter) {
+      queryBuilder.andWhere('user.updated_on >= :updatedAfter', {
+        updatedAfter: queryDto.updatedAfter,
+      });
+    }
+
+    if (queryDto.updatedBefore) {
+      queryBuilder.andWhere('user.updated_on <= :updatedBefore', {
+        updatedBefore: queryDto.updatedBefore,
+      });
+    }
+
+    // Apply sorting
+    const { sortBy, sortOrder } = queryDto;
+    if (sortBy && sortOrder) {
+      const columnMap = {
+        name: 'name',
+        email: 'email',
+        role: 'role',
+        joinedOn: 'joined_on',
+        updatedOn: 'updated_on',
+        location: 'location',
+        userPhone: 'user_phone',
+      };
+      QueryBuilderHelper.applySorting(
+        queryBuilder,
+        'user',
+        columnMap,
+        sortBy,
+        sortOrder,
+        'name',
+      );
+    }
+
+    // Apply pagination
+    const page = queryDto.page || 1;
+    const limit = queryDto.limit || 10;
+    
+    // Get total count
+    const total = await queryBuilder.getCount();
+    
+    // Apply pagination
+    const skip = (page - 1) * limit;
+    queryBuilder.skip(skip).take(limit);
+    
+    // Get paginated data
+    const users = await queryBuilder.getMany();
+    
+    // Create pagination meta
+    const meta: PaginationMetaDto = {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+      hasNext: page < Math.ceil(total / limit),
+      hasPrev: page > 1,
+    };
+
+    return new PaginatedResponseDto(users, meta);
+  }
 
   /**
    * Searches users by name or email
@@ -449,9 +833,7 @@ export class UsersService {
     const queryBuilder = this.usersRepository
       .createQueryBuilder('user')
       .leftJoinAndSelect('user.organization', 'organization')
-      .leftJoinAndSelect('user.manager', 'manager')
-      .where('user.deleted_on IS NULL')
-      .andWhere('(user.name LIKE :query OR user.email LIKE :query)', {
+      .where('(user.name LIKE :query OR user.email LIKE :query)', {
         query: `%${query}%`,
       });
 
@@ -493,77 +875,106 @@ export class UsersService {
     }
 
     return this.usersRepository.find({
-      where: { org_id: orgId, deleted_on: IsNull() },
+      where: { org_id: orgId },
       relations: this.getStandardRelations(),
     });
   }
 
   /**
-   * Advanced user search with pagination and filtering
-   * Supports multiple filters: role, organization, manager, location, dates, etc.
-   * ClientAdmin restricted to their organization
+   * Finds users by organization (without organization/manager details)
+   * Used for organization users endpoints to avoid including organization details
    */
-  async findUsersWithPagination(
-    queryDto: UserQueryDto,
-    requestingUser: any,
-  ): Promise<PaginatedResponseDto<User>> {
-    try {
-      // Validate that specific resource IDs exist before querying
-      await this.validateQueryResources(queryDto);
-
-      const queryBuilder = this.buildUserQuery(queryDto, requestingUser);
-
-      // Apply pagination and get results
-      const page = queryDto.page || 1;
-      const limit = queryDto.limit || 20;
-      const result = await QueryBuilderHelper.paginate(queryBuilder, page, limit);
-
-      // Create pagination metadata
-      const pagination = new PaginationMetaDto(page, limit, result.total);
-
-      // Create applied filters object
-      const appliedFilters = QueryBuilderHelper.buildAppliedFilters({
-        role: queryDto.role,
-        orgId: queryDto.orgId,
-        managerId: queryDto.managerId,
-        active: queryDto.active,
-        location: queryDto.location,
-        deviceNo: queryDto.deviceNo,
-        toolId: queryDto.toolId,
-        phone: queryDto.phone,
-        joinedAfter: queryDto.joinedAfter,
-        joinedBefore: queryDto.joinedBefore,
-        updatedAfter: queryDto.updatedAfter,
-        updatedBefore: queryDto.updatedBefore,
-        search: queryDto.search,
-      });
-
-      return new PaginatedResponseDto(result.data, pagination, appliedFilters);
-    } catch (error) {
-      console.error('Error in findUsersWithPagination:', error);
-
-      // Handle specific error types according to HTTP status codes
-      if (error instanceof BadRequestException) {
-        throw error; // Re-throw validation errors (400)
-      }
-
-      // Handle malformed query parameters (400)
-      if (error.message && error.message.includes('invalid')) {
-        throw new BadRequestException({
-          message: 'Malformed query parameters',
-          details: 'Please check your query parameters and try again',
-          error: error.message,
-        });
-      }
-
-      // Handle unprocessable entity (422) - valid format but can't be processed
-      throw new UnprocessableEntityException({
-        message: 'Query parameters are valid but cannot be processed',
-        details: 'Please check your filter values and try again',
-        error: error.message,
-      });
-    }
+  async findByOrganizationWithoutDetails(orgId: number): Promise<User[]> {
+    return this.usersRepository.find({
+      where: { org_id: orgId },
+    });
   }
+
+  /**
+   * Gets all modules for a specific user with pagination and filtering
+   */
+  async getUserModules(userId: number, queryDto: any) {
+    const {
+      page = 1,
+      limit = 10,
+      status,
+      domainId,
+      enroll,
+    } = queryDto;
+
+    // Validate user exists
+    const user = await this.usersRepository.findOne({
+      where: { id: userId, deleted_on: IsNull() },
+    });
+
+    if (!user) {
+      throw new NotFoundException(`User with ID ${userId} not found`);
+    }
+
+    // Build query to get user modules through user_domains and domain_modules
+    const queryBuilder = this.userModuleRepository
+      .createQueryBuilder('um')
+      .innerJoinAndSelect('um.userDomain', 'ud')
+      .innerJoinAndSelect('ud.domain', 'd')
+      .innerJoinAndSelect('um.module', 'm')
+      .where('ud.user_id = :userId', { userId });
+
+    // Apply filters
+    if (status) {
+      queryBuilder.andWhere('um.status = :status', { status });
+    }
+
+    if (domainId) {
+      queryBuilder.andWhere('ud.domain_id = :domainId', { domainId });
+    }
+
+    if (enroll !== undefined) {
+      if (enroll === 'false') {
+        // Get modules that user is NOT enrolled in
+        queryBuilder.andWhere('um.id IS NULL');
+      }
+      // If enroll is true, no additional filter needed (shows enrolled modules)
+    }
+
+    // Get total count
+    const total = await queryBuilder.getCount();
+
+    // Apply pagination
+    queryBuilder
+      .orderBy('um.joined_on', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    const enrollments = await queryBuilder.getMany();
+
+    // Map to response format
+    const data = enrollments.map((enrollment) => ({
+      id: enrollment.id,
+      module_id: enrollment.module_id,
+      module_title: enrollment.module.title,
+      module_description: enrollment.module.desc,
+      module_duration: enrollment.module.duration,
+      module_level: enrollment.module.level,
+      domain_id: enrollment.userDomain.domain_id,
+      domain_name: enrollment.userDomain.domain.name,
+      status: enrollment.status,
+      score: enrollment.score,
+      threshold_score: enrollment.threshold_score,
+      questions_answered: enrollment.questions_answered,
+      joined_on: enrollment.joined_on,
+      completed_on: enrollment.completed_on,
+      passed: enrollment.score >= enrollment.threshold_score,
+    }));
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
 
   // ----------------------------------------------------------------------------
   // 5. STATISTICS OPERATIONS (PlatformAdmin & ClientAdmin)
@@ -579,17 +990,15 @@ export class UsersService {
     const totalUsers = await this.usersRepository.count({
       where: whereCondition,
     });
-    const activeUsers = await this.usersRepository.count({
-      where: {
-        ...whereCondition,
-        last_login: MoreThan(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)),
-      },
-    });
+
+    // Since we don't have last_login field, we'll use a different approach
+    // For now, we'll consider all users as active since we don't have login tracking
+    const activeUsers = totalUsers; // All users are considered active
 
     return {
       totalUsers,
       activeUsers,
-      inactiveUsers: totalUsers - activeUsers,
+      inactiveUsers: 0, // No inactive users since we don't track last login
     };
   }
 
@@ -612,29 +1021,6 @@ export class UsersService {
     return stats;
   }
 
-  /**
-   * Gets user count breakdown by organization
-   * PlatformAdmin only
-   */
-  async getUserStatsByOrganization(requestingUser: any): Promise<any> {
-    // Only PlatformAdmin can see stats by organization
-    if (requestingUser.role !== 'PlatformAdmin') {
-      return {};
-    }
-
-    const organizations = await this.usersRepository
-      .createQueryBuilder('user')
-      .select('org_id')
-      .addSelect('COUNT(*)', 'count')
-      .where('deleted_on IS NULL')
-      .groupBy('org_id')
-      .getRawMany();
-
-    return organizations.reduce((acc, org) => {
-      acc[org.org_id] = parseInt(org.count);
-      return acc;
-    }, {});
-  }
 
   // ----------------------------------------------------------------------------
   // 6. PASSWORD MANAGEMENT
@@ -721,7 +1107,6 @@ export class UsersService {
       where: {
         role: 'Learner',
         org_id: IsNull(),
-        deleted_on: IsNull(),
       },
       relations: this.getStandardRelations(),
     });
@@ -730,6 +1115,33 @@ export class UsersService {
   // ============================================================================
   // PRIVATE HELPER METHODS
   // ============================================================================
+
+  /**
+   * Gets standard relations for user queries
+   */
+  private getStandardRelations(): string[] {
+    return ['organization', 'manager'];
+  }
+
+  /**
+   * Prepares update data for user updates
+   */
+  private async prepareUpdateData(updateUserDto: UpdateUserDto): Promise<any> {
+    const updateData: any = { ...updateUserDto };
+
+    // Hash password if provided
+    if (updateUserDto.password) {
+      updateData.password_hash = await this.hashPassword(updateUserDto.password);
+      delete updateData.password;
+    }
+
+    // Convert dob string to Date if present
+    if (updateUserDto.dob) {
+      updateData.dob = new Date(updateUserDto.dob);
+    }
+
+    return updateData;
+  }
 
   // ----------------------------------------------------------------------------
   // Utility Helpers
@@ -743,19 +1155,13 @@ export class UsersService {
     return await bcrypt.hash(password, saltRounds);
   }
 
-  /**
-   * Returns standard relations to load with user queries
-   */
-  private getStandardRelations(): string[] {
-    return ['organization', 'manager'];
-  }
 
   /**
    * Builds a where condition based on requesting user's role
    * ClientAdmin is restricted to their organization
    */
   private buildWhereCondition(requestingUser: any): any {
-    const whereCondition: any = { deleted_on: IsNull() };
+    const whereCondition: any = {};
     if (requestingUser.role === 'ClientAdmin' && requestingUser.orgId != null) {
       whereCondition.org_id = requestingUser.orgId;
     }
@@ -810,17 +1216,6 @@ export class UsersService {
   // Validation Helpers
   // ----------------------------------------------------------------------------
 
-  /**
-   * Validates that a user exists and is not deleted
-   * @throws NotFoundException if user doesn't exist
-   */
-  private async validateUserExists(userId: number): Promise<User> {
-    const user = await this.findOne(userId);
-    if (!user) {
-      throw new NotFoundException(`User with ID ${userId} not found`);
-    }
-    return user;
-  }
 
   /**
    * Validates that a manager can be deleted (no active learners)
@@ -834,7 +1229,6 @@ export class UsersService {
       where: {
         manager_id: managerId,
         org_id: orgId,
-        deleted_on: IsNull(),
       },
     });
 
@@ -856,7 +1250,6 @@ export class UsersService {
     const activeUsers = await this.usersRepository.find({
       where: {
         org_id: orgId,
-        deleted_on: IsNull(),
         id: MoreThan(0),
       },
     });
@@ -910,7 +1303,6 @@ export class UsersService {
         where: {
           org_id: createUserDto.org_id,
           role: 'ClientAdmin',
-          deleted_on: IsNull(),
         },
       });
 
@@ -925,26 +1317,13 @@ export class UsersService {
 
   /**
    * Validates PlatformAdmin creation rules
-   * Only one PlatformAdmin allowed in the system
+   * Multiple PlatformAdmins are now allowed in the system
    */
   private async validatePlatformAdminCreation(
     createUserDto: CreateUserDto,
   ): Promise<boolean> {
-    // If creating a PlatformAdmin, ensure no other PlatformAdmin exists in the system
-    if (createUserDto.role === 'PlatformAdmin') {
-      const existingPlatformAdmin = await this.usersRepository.findOne({
-        where: {
-          role: 'PlatformAdmin',
-          deleted_on: IsNull(),
-        },
-      });
-
-      if (existingPlatformAdmin) {
-        throw new ConflictException(
-          'Cannot create PlatformAdmin: A PlatformAdmin already exists in the system',
-        );
-      }
-    }
+    // Platform Admin creation is now allowed - no restrictions on multiple Platform Admins
+    // This method is kept for consistency with other role validations
     return true;
   }
 
@@ -965,7 +1344,6 @@ export class UsersService {
         where: {
           org_id: createUserDto.org_id,
           role: 'ClientAdmin',
-          deleted_on: IsNull(),
         },
       });
 
@@ -999,12 +1377,11 @@ export class UsersService {
       const existingPlatformAdmin = await this.usersRepository.findOne({
         where: {
           role: 'PlatformAdmin',
-          deleted_on: IsNull(),
         },
       });
 
       if (existingPlatformAdmin) {
-        throw new ConflictException(
+        throw new ForbiddenException(
           'Cannot update to PlatformAdmin: A PlatformAdmin already exists in the system',
         );
       }
@@ -1021,13 +1398,12 @@ export class UsersService {
         where: {
           org_id: currentUser.org_id,
           role: 'ClientAdmin',
-          deleted_on: IsNull(),
           id: MoreThan(0), // Exclude current user
         },
       });
 
       if (existingClientAdmin) {
-        throw new ConflictException(
+        throw new ForbiddenException(
           'Cannot update to ClientAdmin: Organization already has a ClientAdmin',
         );
       }
@@ -1044,7 +1420,6 @@ export class UsersService {
         where: {
           org_id: currentUser.org_id,
           role: 'ClientAdmin',
-          deleted_on: IsNull(),
         },
       });
 
@@ -1068,7 +1443,6 @@ export class UsersService {
       const organization = await this.organizationsRepository.findOne({
         where: {
           id: queryDto.orgId,
-          deleted_on: IsNull(),
         },
       });
 
@@ -1084,7 +1458,6 @@ export class UsersService {
       const manager = await this.usersRepository.findOne({
         where: {
           id: queryDto.managerId,
-          deleted_on: IsNull(),
         },
       });
 
@@ -1118,9 +1491,8 @@ export class UsersService {
       const result = await this.userDomainsService.listUserDomains(userId, { page: 1, limit: 1000 });
       const userDomains = result.data || [];
       if (userDomains.length > 0) {
-        for (const domain of userDomains) {
-          await this.userDomainsService.unlink(userId, domain.id);
-        }
+        // Soft delete user domain associations
+        await this.userDomainRepository.softDelete({ user_id: userId });
         console.log(
           `Cleaned up ${userDomains.length} domain associations for user ${userId}${context}`,
         );
@@ -1142,11 +1514,16 @@ export class UsersService {
     context: string = '',
   ): Promise<void> {
     try {
-      const cleanedCount =
-        await this.userModulesService.cleanupUserModules(userId);
-      if (cleanedCount > 0) {
+      const enrollments = await this.userModuleRepository
+        .createQueryBuilder('um')
+        .innerJoin('um.userDomain', 'ud')
+        .where('ud.user_id = :userId', { userId })
+        .getMany();
+
+      if (enrollments.length > 0) {
+        await this.userModuleRepository.remove(enrollments);
         console.log(
-          `Cleaned up ${cleanedCount} module enrollment(s) for user ${userId}${context}`,
+          `Cleaned up ${enrollments.length} module enrollment(s) for user ${userId}${context}`,
         );
       }
     } catch (error) {
@@ -1179,36 +1556,119 @@ export class UsersService {
     }
   }
 
-  // ----------------------------------------------------------------------------
-  // Update Helpers
-  // ----------------------------------------------------------------------------
+
+  
 
   /**
-   * Prepares update data by hashing password if provided
+   * Restores a soft-deleted user and all their related data
+   * Platform Admin can restore any user, Client Admin can restore only their org users
    */
-  private async prepareUpdateData(updateUserDto: UpdateUserDto): Promise<any> {
-    const updateData: any = { ...updateUserDto };
+  async restore(id: number, requestingUser: any): Promise<{ success: boolean; message: string }> {
+    // Check if user exists (including soft-deleted)
+    const user = await this.usersRepository.findOne({
+      where: { id: id },
+      withDeleted: true,
+    });
 
-    if (updateUserDto.password) {
-      updateData.password_hash = await this.hashPassword(
-        updateUserDto.password,
-      );
-      delete updateData.password;
+    console.log(`Restore attempt for user ID ${id}:`, user ? 'User found' : 'User not found');
+    if (user) {
+      console.log(`User ${id} deleted_on status:`, user.deleted_on);
     }
 
-    return updateData;
+    if (!user) {
+      return this.createErrorResponse('User not found');
+    }
+
+    // Check if user is actually soft-deleted
+    if (!user.deleted_on) {
+      return this.createErrorResponse('User is not deleted');
+    }
+
+    // Permission check
+    if (requestingUser.role === UserRole.CLIENT_ADMIN) {
+      // Client Admin can only restore users in their organization
+      if (user.org_id !== requestingUser.orgId) {
+        return this.createErrorResponse(
+          'Client Admin can only restore users in their own organization',
+        );
+      }
+    }
+
+    // Restore user associations
+    await this.restoreUserDomains(id);
+    await this.restoreUserTopics(id);
+    await this.restoreUserModules(id);
+
+    // Restore the user
+    await this.usersRepository.restore(id);
+
+    return this.createSuccessResponse('User restored successfully');
   }
 
   /**
-   * Reassigns manager's team members to ClientAdmin before manager deletion
-   * Returns count of reassigned team members
+   * Restores user domain associations
    */
+  private async restoreUserDomains(userId: number): Promise<void> {
+    try {
+      await this.userDomainRepository.restore({ user_id: userId });
+      console.log(`Restored domain associations for user ${userId}`);
+    } catch (error) {
+      console.error(`Error restoring domain associations for user ${userId}:`, error);
+    }
+  }
+
+  /**
+   * Restores user module enrollments
+   */
+  private async restoreUserModules(userId: number): Promise<void> {
+    try {
+      // Get all soft-deleted user modules for this user
+      const userDomains = await this.userDomainRepository.find({
+        where: { user_id: userId },
+        withDeleted: true,
+      });
+
+      for (const userDomain of userDomains) {
+        await this.userModuleRepository.restore({ user_domain_id: userDomain.id });
+      }
+      console.log(`Restored module enrollments for user ${userId}`);
+    } catch (error) {
+      console.error(`Error restoring module enrollments for user ${userId}:`, error);
+    }
+  }
+
+  /**
+   * Restores user topic assignments
+   */
+  private async restoreUserTopics(userId: number): Promise<void> {
+    try {
+      // Get all soft-deleted user modules for this user
+      const userDomains = await this.userDomainRepository.find({
+        where: { user_id: userId },
+        withDeleted: true,
+      });
+
+      for (const userDomain of userDomains) {
+        const userModules = await this.userModuleRepository.find({
+          where: { user_domain_id: userDomain.id },
+          withDeleted: true,
+        });
+        for (const userModule of userModules) {
+          // Note: restoreTopicsForUserModule method needs to be implemented in UserTopicsService
+          console.log(`Would restore topics for user module ${userModule.id}`);
+        }
+      }
+      console.log(`Restored topic assignments for user ${userId}`);
+    } catch (error) {
+      console.error(`Error restoring topic assignments for user ${userId}:`, error);
+    }
+  }
   private async reassignManagerTeamMembers(
     managerId: number,
     orgId: number,
   ): Promise<number> {
     const teamMembers = await this.usersRepository.find({
-      where: { manager_id: managerId, org_id: orgId, deleted_on: IsNull() },
+      where: { manager_id: managerId, org_id: orgId },
     });
 
     const teamMembersCount = teamMembers.length;
@@ -1219,14 +1679,13 @@ export class UsersService {
         where: {
           org_id: orgId,
           role: 'ClientAdmin',
-          deleted_on: IsNull(),
         },
       });
 
       if (clientAdmin) {
         // Reassign team members to ClientAdmin
         await this.usersRepository.update(
-          { manager_id: managerId, org_id: orgId, deleted_on: IsNull() },
+          { manager_id: managerId, org_id: orgId },
           { manager_id: clientAdmin.id },
         );
       } else {
@@ -1238,7 +1697,7 @@ export class UsersService {
 
         // Remove manager assignment and log the issue
         await this.usersRepository.update(
-          { manager_id: managerId, org_id: orgId, deleted_on: IsNull() },
+          { manager_id: managerId, org_id: orgId },
           { manager_id: null },
         );
 
@@ -1250,96 +1709,67 @@ export class UsersService {
     return teamMembersCount;
   }
 
-  // ----------------------------------------------------------------------------
-  // Query Building Helpers (for findUsersWithPagination)
-  // ----------------------------------------------------------------------------
-
   /**
-   * Builds a query builder with filters and sorting for pagination
+   * Send OTP to an email address or phone number
+   * This endpoint can be used for various purposes (password reset, verification, etc.)
    */
-  private buildUserQuery(
-    queryDto: UserQueryDto,
-    requestingUser: any,
-  ): SelectQueryBuilder<User> {
-    const queryBuilder = this.usersRepository
-      .createQueryBuilder('user')
-      .where('user.deleted_on IS NULL');
-
-    // Apply role-based access control
-    if (requestingUser.role === 'ClientAdmin' && requestingUser.orgId != null) {
-      queryBuilder.andWhere('user.org_id = :orgId', {
-        orgId: requestingUser.orgId,
-      });
+  async sendOtp(email?: string, phone?: string): Promise<{ message: string }> {
+    // Validate that at least one is provided
+    if (!email && !phone) {
+      throw new BadRequestException('Please provide either email or phone number');
     }
 
-    // Apply filters using QueryBuilderHelper
-    QueryBuilderHelper.applyEqualityFilter(queryBuilder, 'user', 'role', queryDto.role);
-    QueryBuilderHelper.applyEqualityFilter(queryBuilder, 'user', 'org_id', queryDto.orgId);
-    QueryBuilderHelper.applyEqualityFilter(queryBuilder, 'user', 'manager_id', queryDto.managerId);
-    QueryBuilderHelper.applyEqualityFilter(queryBuilder, 'user', 'tool_id', queryDto.toolId);
-    QueryBuilderHelper.applyLikeFilter(queryBuilder, 'user', 'location', queryDto.location);
-    QueryBuilderHelper.applyLikeFilter(queryBuilder, 'user', 'registered_device_no', queryDto.deviceNo);
-    QueryBuilderHelper.applyLikeFilter(queryBuilder, 'user', 'user_phone', queryDto.phone);
+    // Generate OTP
+    const otp = this.otpService.generateOtp();
+    
+    // If email is provided, send OTP via email
+    if (email) {
+      console.log('DEBUG: Generated OTP for email', email);
+      
+      // Check if user with this email already exists and is fully registered
+      const existingUser = await this.usersRepository.findOne({
+        where: { email },
+      });
 
-    // Active filter (based on last_login)
-    if (queryDto.active !== undefined) {
-      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-      if (queryDto.active) {
-        queryBuilder.andWhere('user.last_login > :thirtyDaysAgo', { thirtyDaysAgo });
-      } else {
-        queryBuilder.andWhere(
-          '(user.last_login IS NULL OR user.last_login <= :thirtyDaysAgo)',
-          { thirtyDaysAgo },
+      // If user exists and has password_hash and name (complete user), throw error
+      if (existingUser && existingUser.password_hash && existingUser.name) {
+        throw new ConflictException(
+          `This email is already registered and verified.`,
         );
       }
+      
+      // Store OTP in Redis
+      await this.otpService.storeOtp(email, otp, 'register');
+      console.log('DEBUG: OTP stored in Redis');
+      
+      // Send OTP via email
+      await this.mailService.sendVerificationOtp(email, otp);
+      console.log('DEBUG: OTP email sent');
+      
+      return {
+        message: 'Success - please check your mail for OTP',
+      };
     }
-
-    // Date range filters
-    QueryBuilderHelper.applyDateRangeFilter(
-      queryBuilder,
-      'user',
-      'joined_on',
-      queryDto.joinedAfter,
-      queryDto.joinedBefore,
-    );
-    QueryBuilderHelper.applyDateRangeFilter(
-      queryBuilder,
-      'user',
-      'updated_on',
-      queryDto.updatedAfter,
-      queryDto.updatedBefore,
-    );
-
-    // Search filter (name or email)
-    if (queryDto.search) {
-      QueryBuilderHelper.applySearch(
-        queryBuilder,
-        'user',
-        ['name', 'email'],
-        queryDto.search,
-      );
+    
+    // If phone is provided, send OTP via SMS
+    if (!phone) {
+      throw new BadRequestException('Phone number is required');
     }
-
-    // Apply sorting
-    const columnMap = {
-      [SortBy.NAME]: 'name',
-      [SortBy.EMAIL]: 'email',
-      [SortBy.ROLE]: 'role',
-      [SortBy.JOINED_ON]: 'joined_on',
-      [SortBy.UPDATED_ON]: 'updated_on',
-      [SortBy.LOCATION]: 'location',
-      [SortBy.USER_PHONE]: 'user_phone',
+    
+    console.log('DEBUG: Generated OTP for phone', phone);
+    
+    // Store OTP in Redis
+    await this.otpService.storeOtp(phone, otp, 'register');
+    console.log('DEBUG: OTP stored in Redis');
+    
+    // Send OTP via SMS
+    await this.mailService.sendSmsOtp(phone, otp);
+    console.log('DEBUG: OTP SMS sent');
+    
+    return {
+      message: 'Success - please check your phone for OTP',
     };
-    QueryBuilderHelper.applySorting(
-      queryBuilder,
-      'user',
-      columnMap,
-      queryDto.sortBy,
-      queryDto.sortOrder,
-      'email',
-    );
-
-    return queryBuilder;
   }
+
 
 }

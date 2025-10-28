@@ -6,7 +6,7 @@ import { UserTopic } from './entities/user-topic.entity';
 import { User } from '../users/entities/user.entity';
 import { Topic } from '../topics/entities/topic.entity';
 import { UserModule } from '../user-modules/entities/user-module.entity';
-import { ModuleTopic } from '../module_topics/entities/module-topic.entity';
+import { ModuleTopic } from '../module-topics/entities/module-topic.entity';
 import { UserModulesModule } from '../user-modules/user-modules.module';
 import { UsersModule } from '../users/users.module';
 

@@ -33,11 +33,18 @@ export class HttpExceptionFilter implements ExceptionFilter {
       message = 'Internal server error';
 
       // Log the actual error for debugging
+      const errorDetails = exception instanceof Error 
+        ? `${exception.message}\n${exception.stack}` 
+        : String(exception);
+      
       this.logger.error(
-        `Unhandled exception: ${exception}`,
-        exception instanceof Error ? exception.stack : undefined,
+        `Unhandled exception: ${errorDetails}`,
         `${request.method} ${request.url}`,
       );
+      
+      console.error('=== FULL ERROR DETAILS ===');
+      console.error(errorDetails);
+      console.error('==========================');
     }
 
     // Log all errors for debugging

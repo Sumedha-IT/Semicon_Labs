@@ -23,5 +23,11 @@ export class UserTopicQueryDto extends BaseQueryDto {
   @IsInt()
   @Min(1)
   topicId?: number; // filter by specific topic
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  userModuleId?: number; // filter by specific user module
 }
 

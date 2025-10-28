@@ -1,11 +1,18 @@
-import { Entity, Column, ManyToOne, JoinColumn, Index } from 'typeorm';
-import { BaseEntity } from '../../common/entities/base.entity';
+import { Entity, Column, ManyToOne, JoinColumn, Index, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 import { Module } from '../../modules/entities/module.entity';
 import { Topic } from '../../topics/entities/topic.entity';
 
 @Entity({ name: 'module_topics' })
 @Index(['module_id', 'topic_id'], { unique: true }) // Prevent duplicate module-topic pairs
-export class ModuleTopic extends BaseEntity {
+export class ModuleTopic {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @CreateDateColumn({ name: 'created_on', type: 'timestamptz' })
+  created_on: Date;
+
+  @UpdateDateColumn({ name: 'updated_on', type: 'timestamptz' })
+  updated_on: Date;
   @Column({ name: 'module_id', nullable: false })
   module_id: number;
 

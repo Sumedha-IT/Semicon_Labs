@@ -11,8 +11,11 @@ import { UpdateTopicDto } from './dto/update-topic.dto';
 import { TopicQueryDto } from './dto/topic-query.dto';
 import { Repository,ILike,FindManyOptions } from 'typeorm';
 import { Module as ModuleEntity } from '../modules/entities/module.entity';
+import { ModuleTopic } from '../module-topics/entities/module-topic.entity';
+import { DocContent } from '../doc-contents/entities/doc-content.entity';
 import { ChangelogService } from '../changelog/changelog.service';
 import { QueryBuilderHelper } from '../common/utils/query-builder.helper';
+import { FileStorageService } from '../doc-contents/utils/file-storage.util';
 
 @Injectable()
 export class TopicsService {
@@ -21,7 +24,12 @@ export class TopicsService {
         private readonly topicRepo: Repository<Topic>,
         @InjectRepository(ModuleEntity)
         private readonly moduleRepo: Repository<ModuleEntity>,
+        @InjectRepository(ModuleTopic)
+        private readonly moduleTopicRepo: Repository<ModuleTopic>,
+        @InjectRepository(DocContent)
+        private readonly docContentRepo: Repository<DocContent>,
         private readonly changelogService: ChangelogService,
+        private readonly fileStorageService: FileStorageService,
     ) {}
 
     // ============================================================================
@@ -119,13 +127,60 @@ export class TopicsService {
     }
 
     /**
-     * Deletes a topic by ID
+     * Deletes a topic by ID with automatic reordering and storage cleanup
      * @throws NotFoundException if topic doesn't exist
      */
-    async remove(id: number): Promise<{ message: string }> {
+    async remove(id: number, userId: number, reason: string): Promise<{ message: string; reason: string }> {
         const topic = await this.findOne(id);
+        
+        // 1. Get all modules containing this topic and their orders
+        const moduleTopics = await this.moduleTopicRepo.find({
+            where: { topic_id: id },
+            select: ['module_id', 'topic_order']
+        });
+        
+        // 2. Get doc content info for storage cleanup (before deletion)
+        const docContent = await this.docContentRepo.findOne({
+            where: { topicId: id },
+            select: ['storageKeyPrefix']
+        });
+        
+        // 3. Reorder topics in each affected module (before deletion)
+        for (const mt of moduleTopics) {
+            await this.moduleTopicRepo
+                .createQueryBuilder()
+                .update()
+                .set({ topic_order: () => 'topic_order_in_module - 1' })
+                .where('module_id = :moduleId', { moduleId: mt.module_id })
+                .andWhere('topic_order_in_module > :order', { order: mt.topic_order })
+                .execute();
+        }
+        
+        // 4. Log the deletion with reason
+        await this.changelogService.createLog({
+            changeType: 'topic',
+            changeTypeId: id,
+            userId: userId,
+            reason: reason
+        });
+        
+        // 5. Delete topic (CASCADE will handle module_topics, user_topics, doc_contents)
         await this.topicRepo.remove(topic);
-        return { message: `Topic with ID ${id} has been deleted successfully` };
+        
+        // 6. Clean up storage files (after successful DB deletion)
+        if (docContent?.storageKeyPrefix) {
+            try {
+                await this.fileStorageService.deleteFolder(docContent.storageKeyPrefix);
+            } catch (error) {
+                // Log error but don't fail the operation
+                console.error(`Failed to delete storage files for topic ${id}:`, error);
+            }
+        }
+        
+        return { 
+            message: `Topic "${topic.title}" (ID: ${id}) has been deleted successfully`,
+            reason: reason
+        };
     }
     
     // ----------------------------------------------------------------------------

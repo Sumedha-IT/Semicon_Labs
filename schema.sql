@@ -24,16 +24,20 @@ CREATE TABLE users (
     password_hash TEXT,
     role VARCHAR(50) NOT NULL CHECK (role IN ('PlatformAdmin', 'ClientAdmin', 'Manager', 'Learner')),
     dob DATE,
-    user_phone VARCHAR(20) NOT NULL, -- Phone number
-    location VARCHAR(150) NOT NULL,
+    user_phone VARCHAR(20) NULL, -- Phone number (optional)
+    location VARCHAR(150) NULL, -- Location (optional)
     registered_device_no VARCHAR(100) NOT NULL,
-    tool_id INTEGER NOT NULL, 
+    profession VARCHAR(100) NULL,
+    highest_qualification VARCHAR(100) NULL,
+    highest_qualification_specialization VARCHAR(150) NULL,
+    tool_id INTEGER NULL, -- Tool ID (optional) 
     org_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL, -- NULL for individual users
     manager_id INTEGER REFERENCES users(id) ON DELETE SET NULL, -- NULL for users without manager
     joined_on TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(), -- Users join rather than created
     updated_on TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     deleted_on TIMESTAMP WITH TIME ZONE NULL -- Soft delete timestamp
 );
+
 
 -- Create Domains table
 CREATE TABLE domains (
@@ -113,14 +117,15 @@ CREATE TABLE module_topics (
 );
 
 -- Create User-Topics join table for progress tracking
+-- Uses user_module_id to enforce module access and provide clear context
 CREATE TABLE user_topics (
     id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_module_id INTEGER NOT NULL REFERENCES user_modules(id) ON DELETE CASCADE,
     topic_id INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
     status VARCHAR(20) NOT NULL DEFAULT 'todo' CHECK (status IN ('todo', 'in_progress', 'completed')),
     created_on TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_on TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_user_topic UNIQUE (user_id, topic_id)
+    CONSTRAINT uq_user_module_topic UNIQUE (user_module_id, topic_id)
 );
 
 -- Create DocContents table for interactive lesson bundles
@@ -159,13 +164,11 @@ CREATE INDEX users_manager_id_idx ON users(manager_id);
 CREATE INDEX users_role_idx ON users(role);
 CREATE INDEX users_email_idx ON users(email);
 CREATE INDEX users_tool_id_idx ON users(tool_id);
-CREATE INDEX users_deleted_on_idx ON users(deleted_on);
 CREATE INDEX users_org_role_idx ON users(org_id, role);
 
 -- Organizations table indexes
 CREATE INDEX organizations_type_idx ON organizations(type);
 CREATE INDEX organizations_subscription_id_idx ON organizations(subscription_id);
-CREATE INDEX organizations_deleted_on_idx ON organizations(deleted_on);
 
 -- User-Domains table indexes
 CREATE INDEX idx_user_domains_user_id ON user_domains (user_id);
@@ -191,6 +194,7 @@ CREATE INDEX idx_module_topics_order ON module_topics (module_id, topic_order_in
 -- User-Topics table indexes
 CREATE INDEX idx_user_topics_user_id ON user_topics (user_id);
 CREATE INDEX idx_user_topics_topic_id ON user_topics (topic_id);
+CREATE INDEX idx_user_topics_user_module_id ON user_topics (user_module_id);
 CREATE INDEX idx_user_topics_status ON user_topics (status);
 
 -- DocContents table indexes
@@ -224,11 +228,7 @@ INSERT INTO domains (name, description) VALUES
 ('Design Verification', 'Verification of semiconductor designs'),
 ('Analog Layout', 'Analog layout for semiconductor devices');
 
--- Insert sample modules
-INSERT INTO modules (title, "desc", duration, level) VALUES
-('Introduction to Physical Design', 'Fundamentals of physical design in semiconductor devices', 120, 'Beginner'),
-('Design Verification Basics', 'Basic concepts of design verification', 90, 'Beginner'),
-('Analog Layout Fundamentals', 'Essential concepts for analog layout design', 150, 'Beginner');
+
 
 -- Insert domain-module associations
 INSERT INTO domain_modules (domain_id, module_id) VALUES

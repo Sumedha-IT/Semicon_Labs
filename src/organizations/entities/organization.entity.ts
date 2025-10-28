@@ -1,8 +1,18 @@
-import { Entity, Column } from 'typeorm';
-import { BaseEntity } from '../../common/entities/base.entity';
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, DeleteDateColumn } from 'typeorm';
 
 @Entity({ name: 'organizations' })
-export class Organization extends BaseEntity {
+export class Organization {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @CreateDateColumn({ name: 'created_on', type: 'timestamptz' })
+  created_on: Date;
+
+  @UpdateDateColumn({ name: 'updated_on', type: 'timestamptz' })
+  updated_on: Date;
+
+  @DeleteDateColumn({ name: 'deleted_on', type: 'timestamptz' })
+  deleted_on: Date | null;
   @Column({ length: 100 })
   name: string;
 
@@ -29,9 +39,6 @@ export class Organization extends BaseEntity {
 
   @Column({ nullable: true })
   subscription_id?: number; // Reference to subscription plan
-
-  @Column({ type: 'timestamptz', nullable: true, name: 'deleted_on' })
-  deleted_on: Date;
 
   // Note: Removed @OneToMany relation to prevent loading all users
   // Use separate endpoint /organizations/:id/users to get user details

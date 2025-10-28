@@ -4,8 +4,8 @@ import { Repository, IsNull } from 'typeorm';
 import { UserModule } from './entities/user-module.entity';
 import { User } from '../users/entities/user.entity';
 import { Module } from '../modules/entities/module.entity';
-import { ModuleUserQueryDto, EnrollUserDto } from './dto/user-module.dto';
-import { UserModulesService } from './user-modules.service';
+import { ModuleUserQueryDto } from './dto/user-module.dto';
+// UserModulesService functionality moved to ModulesController
 
 @Injectable()
 export class ModuleUsersService {
@@ -16,7 +16,7 @@ export class ModuleUsersService {
     private userRepository: Repository<User>,
     @InjectRepository(Module)
     private moduleRepository: Repository<Module>,
-    private readonly userModulesService: UserModulesService,
+    // UserModulesService functionality moved to ModulesController
   ) {}
 
   async getModuleUsers(moduleId: number, queryDto: ModuleUserQueryDto) {
@@ -96,13 +96,5 @@ export class ModuleUsersService {
     };
   }
 
-  async enrollUserInModule(moduleId: number, enrollDto: EnrollUserDto) {
-    return this.userModulesService.enroll(enrollDto.userId, {
-      moduleId: moduleId,
-    });
-  }
 
-  async unenrollUser(userId: number, moduleId: number) {
-    return this.userModulesService.unenrollByUserAndModule(userId, moduleId);
-  }
 }

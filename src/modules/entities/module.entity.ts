@@ -1,10 +1,17 @@
-import { Entity, Column, OneToMany } from 'typeorm';
-import { BaseEntity } from '../../common/entities/base.entity';
+import { Entity, Column, OneToMany, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 import { DomainModule } from '../../domain-modules/entities/domain-module.entity';
-import { ModuleTopic } from '../../module_topics/entities/module-topic.entity';
+import { ModuleTopic } from '../../module-topics/entities/module-topic.entity';
 
 @Entity({ name: 'modules' })
-export class Module extends BaseEntity {
+export class Module {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @CreateDateColumn({ name: 'created_on', type: 'timestamptz' })
+  created_on: Date;
+
+  @UpdateDateColumn({ name: 'updated_on', type: 'timestamptz' })
+  updated_on: Date;
   @Column({ length: 200, nullable: false })
   title: string;
 

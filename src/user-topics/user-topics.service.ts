@@ -11,7 +11,7 @@ import { UserTopic } from './entities/user-topic.entity';
 import { User } from '../users/entities/user.entity';
 import { Topic } from '../topics/entities/topic.entity';
 import { UserModule } from '../user-modules/entities/user-module.entity';
-import { ModuleTopic } from '../module_topics/entities/module-topic.entity';
+import { ModuleTopic } from '../module-topics/entities/module-topic.entity';
 import { UserTopicQueryDto } from './dto/user-topic-query.dto';
 import { UpdateUserTopicDto } from './dto/update-user-topic.dto';
 
@@ -39,23 +39,27 @@ export class UserTopicsService {
   // ----------------------------------------------------------------------------
 
   /**
-   * Assign a topic to a user
+   * Assign a topic to a user through a specific module
    * Validates user has access through module enrollment
    */
-  async assignTopic(userId: number, topicId: number) {
+  async assignTopic(userId: number, topicId: number, userModuleId: number) {
     // Validate user exists and is active
     await this.validateUserExistsAndActive(userId);
 
     // Validate topic exists
     const topic = await this.validateTopicExists(topicId);
 
-    // Verify user has access through module enrollment
-    await this.validateUserHasTopicAccess(userId, topicId);
+    // Validate user module belongs to user and topic exists in module
+    await this.validateUserModuleAndTopicAccess(userId, topicId, userModuleId);
 
-    // Check if already assigned
-    const existingAssignment = await this.userTopicRepository.findOne({
-      where: { user_id: userId, topic_id: topicId },
-    });
+    // Check if already assigned through user module
+    const existingAssignment = await this.userTopicRepository
+      .createQueryBuilder('ut')
+      .innerJoin('user_modules', 'um', 'um.id = ut.user_module_id')
+      .innerJoin('user_domains', 'ud', 'ud.id = um.user_domain_id')
+      .where('ud.user_id = :userId', { userId })
+      .andWhere('ut.topic_id = :topicId', { topicId })
+      .getOne();
 
     if (existingAssignment) {
       throw new ConflictException(
@@ -65,8 +69,8 @@ export class UserTopicsService {
 
     // Create assignment
     const assignment = this.userTopicRepository.create({
-      user_id: userId,
       topic_id: topicId,
+      user_module_id: userModuleId,
       status: 'todo',
     });
 
@@ -84,9 +88,13 @@ export class UserTopicsService {
     // Validate user exists and is active
     await this.validateUserExistsAndActive(userId);
 
-    const assignment = await this.userTopicRepository.findOne({
-      where: { user_id: userId, topic_id: topicId },
-    });
+    const assignment = await this.userTopicRepository
+      .createQueryBuilder('ut')
+      .innerJoin('user_modules', 'um', 'um.id = ut.user_module_id')
+      .innerJoin('user_domains', 'ud', 'ud.id = um.user_domain_id')
+      .where('ud.user_id = :userId', { userId })
+      .andWhere('ut.topic_id = :topicId', { topicId })
+      .getOne();
 
     if (!assignment) {
       throw new NotFoundException(
@@ -111,63 +119,46 @@ export class UserTopicsService {
    * Returns only assigned topics
    */
   async getUserTopics(userId: number, queryDto: UserTopicQueryDto) {
-    const { page = 1, limit = 10, status, moduleId, topicId } = queryDto;
+    const { page = 1, limit = 10, status, moduleId, topicId, userModuleId } = queryDto;
 
     // Validate user exists and is active
     await this.validateUserExistsAndActive(userId);
 
-    // Build where conditions
-    const where: any = { user_id: userId };
+    // Build base query with user relationship
+    let queryBuilder = this.userTopicRepository
+      .createQueryBuilder('ut')
+      .innerJoin('user_modules', 'um', 'um.id = ut.user_module_id')
+      .innerJoin('user_domains', 'ud', 'ud.id = um.user_domain_id')
+      .where('ud.user_id = :userId', { userId });
+
+    // Apply filters
     if (status) {
-      where.status = status;
+      queryBuilder.andWhere('ut.status = :status', { status });
     }
     if (topicId) {
-      where.topic_id = topicId;
+      queryBuilder.andWhere('ut.topic_id = :topicId', { topicId });
     }
-
-    // Apply moduleId filter if provided
-    let assignments: UserTopic[];
-    let total: number;
-
+    if (userModuleId) {
+      queryBuilder.andWhere('ut.user_module_id = :userModuleId', { userModuleId });
+    }
     if (moduleId) {
-      // Need to filter by module - use query builder
-      const queryBuilder = this.userTopicRepository
-        .createQueryBuilder('ut')
-        .innerJoin('module_topics', 'mt', 'mt.topic_id = ut.topic_id')
-        .where('ut.user_id = :userId', { userId })
-        .andWhere('mt.module_id = :moduleId', { moduleId });
-
-      if (status) {
-        queryBuilder.andWhere('ut.status = :status', { status });
-      }
-      if (topicId) {
-        queryBuilder.andWhere('ut.topic_id = :topicId', { topicId });
-      }
-
-      queryBuilder
-        .orderBy('ut.created_on', 'DESC')
-        .skip((page - 1) * limit)
-        .take(limit);
-
-      assignments = await queryBuilder.getMany();
-
-      const countQuery = queryBuilder.clone();
-      total = await countQuery.getCount();
-    } else {
-      // No module filter - use simpler find
-      [assignments, total] = await this.userTopicRepository.findAndCount({
-        where,
-        order: { created_on: 'DESC' },
-        skip: (page - 1) * limit,
-        take: limit,
-      });
+      queryBuilder.andWhere('um.module_id = :moduleId', { moduleId });
     }
+
+    // Apply pagination and ordering
+    queryBuilder
+      .orderBy('ut.created_on', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    const assignments = await queryBuilder.getMany();
+    const total = await queryBuilder.getCount();
 
     // Map to response format
     const data = assignments.map((assignment) => ({
       id: assignment.id,
-      user_id: assignment.user_id,
       topic_id: assignment.topic_id,
+      user_module_id: assignment.user_module_id,
       status: assignment.status,
       created_on: assignment.created_on,
       updated_on: assignment.updated_on,
@@ -189,9 +180,13 @@ export class UserTopicsService {
     // Validate user exists and is active
     await this.validateUserExistsAndActive(userId);
 
-    const assignment = await this.userTopicRepository.findOne({
-      where: { user_id: userId, topic_id: topicId },
-    });
+    const assignment = await this.userTopicRepository
+      .createQueryBuilder('ut')
+      .innerJoin('user_modules', 'um', 'um.id = ut.user_module_id')
+      .innerJoin('user_domains', 'ud', 'ud.id = um.user_domain_id')
+      .where('ud.user_id = :userId', { userId })
+      .andWhere('ut.topic_id = :topicId', { topicId })
+      .getOne();
 
     if (!assignment) {
       throw new NotFoundException(
@@ -201,8 +196,8 @@ export class UserTopicsService {
 
     return {
       id: assignment.id,
-      user_id: assignment.user_id,
       topic_id: assignment.topic_id,
+      user_module_id: assignment.user_module_id,
       status: assignment.status,
       created_on: assignment.created_on,
       updated_on: assignment.updated_on,
@@ -226,9 +221,13 @@ export class UserTopicsService {
     await this.validateUserExistsAndActive(userId);
 
     // Find the assignment
-    const assignment = await this.userTopicRepository.findOne({
-      where: { user_id: userId, topic_id: topicId },
-    });
+    const assignment = await this.userTopicRepository
+      .createQueryBuilder('ut')
+      .innerJoin('user_modules', 'um', 'um.id = ut.user_module_id')
+      .innerJoin('user_domains', 'ud', 'ud.id = um.user_domain_id')
+      .where('ud.user_id = :userId', { userId })
+      .andWhere('ut.topic_id = :topicId', { topicId })
+      .getOne();
 
     if (!assignment) {
       throw new NotFoundException(
@@ -245,8 +244,8 @@ export class UserTopicsService {
       message: 'User topic updated successfully',
       data: {
         id: updated.id,
-        user_id: updated.user_id,
         topic_id: updated.topic_id,
+        user_module_id: updated.user_module_id,
         status: updated.status,
         created_on: updated.created_on,
         updated_on: updated.updated_on,
@@ -263,9 +262,12 @@ export class UserTopicsService {
    * Does not validate if user exists since it's called during deletion
    */
   async cleanupTopicsForUser(userId: number): Promise<number> {
-    const assignments = await this.userTopicRepository.find({
-      where: { user_id: userId },
-    });
+    const assignments = await this.userTopicRepository
+      .createQueryBuilder('ut')
+      .innerJoin('user_modules', 'um', 'um.id = ut.user_module_id')
+      .innerJoin('user_domains', 'ud', 'ud.id = um.user_domain_id')
+      .where('ud.user_id = :userId', { userId })
+      .getMany();
 
     if (assignments.length > 0) {
       await this.userTopicRepository.remove(assignments);
@@ -298,7 +300,7 @@ export class UserTopicsService {
       .createQueryBuilder()
       .delete()
       .from(UserTopic)
-      .where('user_id = :userId', { userId })
+      .where('user_module_id IN (SELECT um.id FROM user_modules um INNER JOIN user_domains ud ON ud.id = um.user_domain_id WHERE ud.user_id = :userId)', { userId })
       .andWhere('topic_id IN (:...topicIds)', { topicIds })
       .execute();
 
@@ -385,6 +387,45 @@ export class UserTopicsService {
     }
   }
 
+  /**
+   * Validates that a user module belongs to the user and the topic exists in that module
+   * @throws ForbiddenException if validation fails
+   */
+  private async validateUserModuleAndTopicAccess(
+    userId: number,
+    topicId: number,
+    userModuleId: number,
+  ): Promise<void> {
+    // First, validate that the user module belongs to the user
+    const userModule = await this.userModuleRepository
+      .createQueryBuilder('um')
+      .innerJoin('user_domains', 'ud', 'ud.id = um.user_domain_id')
+      .select(['um.id', 'um.module_id'])
+      .where('um.id = :userModuleId', { userModuleId })
+      .andWhere('ud.user_id = :userId', { userId })
+      .getOne();
+
+    if (!userModule) {
+      throw new ForbiddenException(
+        'User module does not belong to this user or does not exist',
+      );
+    }
+
+    // Then, validate that the topic exists in this module
+    const topicInModule = await this.moduleTopicRepository.findOne({
+      where: {
+        module_id: userModule.module_id,
+        topic_id: topicId,
+      },
+    });
+
+    if (!topicInModule) {
+      throw new ForbiddenException(
+        'Topic does not belong to the specified module',
+      );
+    }
+  }
+
   // ----------------------------------------------------------------------------
   // Update Helpers
   // ----------------------------------------------------------------------------
@@ -423,8 +464,8 @@ export class UserTopicsService {
   private mapAssignmentToResponse(assignment: UserTopic) {
     return {
       id: assignment.id,
-      user_id: assignment.user_id,
       topic_id: assignment.topic_id,
+      user_module_id: assignment.user_module_id,
       status: assignment.status,
       created_on: assignment.created_on,
       updated_on: assignment.updated_on,

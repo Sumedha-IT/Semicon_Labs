@@ -2,16 +2,13 @@ import {
   Controller,
   Get,
   Post,
-  Delete,
   Body,
   Param,
-  Query,
   ParseIntPipe,
   UseGuards,
   HttpCode,
   HttpStatus,
   Res,
-  BadRequestException,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { DomainModulesService } from './domain-modules.service';
@@ -37,36 +34,6 @@ export class DomainModulesController {
     return this.domainModulesService.linkModules(id, linkDto.moduleIds);
   }
 
-  @Delete(':id/modules/link')
-  @Roles(UserRole.PLATFORM_ADMIN)
-  @HttpCode(HttpStatus.OK)
-  async unlinkModules(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() unlinkDto: LinkDomainModulesDto,
-  ) {
-    return this.domainModulesService.unlinkModules(id, unlinkDto.moduleIds);
-  }
-
-  // Single module operations (no body needed)
-  @Post(':id/modules/:moduleId/link')
-  @Roles(UserRole.PLATFORM_ADMIN)
-  @HttpCode(HttpStatus.OK)
-  async linkSingleModule(
-    @Param('id', ParseIntPipe) id: number,
-    @Param('moduleId', ParseIntPipe) moduleId: number,
-  ) {
-    return this.domainModulesService.linkModules(id, [moduleId]);
-  }
-
-  @Delete(':id/modules/:moduleId/link')
-  @Roles(UserRole.PLATFORM_ADMIN)
-  @HttpCode(HttpStatus.OK)
-  async unlinkSingleModule(
-    @Param('id', ParseIntPipe) id: number,
-    @Param('moduleId', ParseIntPipe) moduleId: number,
-  ) {
-    return this.domainModulesService.unlinkModules(id, [moduleId]);
-  }
 
   @Get(':id/modules')
   @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER)

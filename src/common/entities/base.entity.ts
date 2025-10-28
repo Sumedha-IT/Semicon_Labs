@@ -1,4 +1,4 @@
-import { PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, DeleteDateColumn } from 'typeorm';
 
 /**
  * Base entity class with common fields for all entities.
@@ -13,5 +13,8 @@ export abstract class BaseEntity {
 
   @UpdateDateColumn({ name: 'updated_on', type: 'timestamptz' })
   updated_on: Date;
+
+  @DeleteDateColumn({ name: 'deleted_on', type: 'timestamptz' })
+  deleted_on: Date | null;
 }
 

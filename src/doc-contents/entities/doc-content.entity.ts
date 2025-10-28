@@ -1,10 +1,17 @@
-import { Entity, Column, ManyToOne, JoinColumn, Index } from 'typeorm';
-import { BaseEntity } from '../../common/entities/base.entity';
+import { Entity, Column, ManyToOne, JoinColumn, Index, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 import { Topic } from '../../topics/entities/topic.entity';
 import { User } from '../../users/entities/user.entity';
 
 @Entity({ name: 'doc_contents' })
-export class DocContent extends BaseEntity {
+export class DocContent {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @CreateDateColumn({ name: 'created_on', type: 'timestamptz' })
+  created_on: Date;
+
+  @UpdateDateColumn({ name: 'updated_on', type: 'timestamptz' })
+  updated_on: Date;
   @Column({ length: 200 })
   title: string;
 

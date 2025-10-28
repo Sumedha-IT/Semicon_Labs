@@ -12,12 +12,16 @@ import {
   HttpStatus,
   HttpCode,
   BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+  ConflictException,
   Res,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { UserTopicsService } from './user-topics.service';
 import { UserTopicQueryDto } from './dto/user-topic-query.dto';
 import { UpdateUserTopicDto } from './dto/update-user-topic.dto';
+import { CreateUserTopicDto } from './dto/create-user-topic.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorator/roles.decorator';
@@ -28,7 +32,7 @@ import { UserRole } from '../common/constants/user-roles';
 export class UserTopicsController {
   constructor(private readonly userTopicsService: UserTopicsService) {}
 
-  @Post(':topicId')
+  @Post()
   @Roles(
     UserRole.PLATFORM_ADMIN,
     UserRole.CLIENT_ADMIN,
@@ -38,14 +42,12 @@ export class UserTopicsController {
   @HttpCode(HttpStatus.CREATED)
   async assignTopic(
     @Param('userId') userId: string,
-    @Param('topicId') topicId: string,
-    @Body() body: any, // Accept empty body to prevent JSON parsing errors
+    @Body() createDto: CreateUserTopicDto,
     @Request() req,
   ) {
     const uid = parseInt(userId, 10);
-    const tid = parseInt(topicId, 10);
-    if (isNaN(uid) || isNaN(tid)) {
-      throw new BadRequestException('Invalid user ID or topic ID');
+    if (isNaN(uid)) {
+      throw new BadRequestException('Invalid user ID');
     }
 
     // Learners can only assign to themselves
@@ -55,7 +57,36 @@ export class UserTopicsController {
       );
     }
 
-    return this.userTopicsService.assignTopic(uid, tid);
+    return await this.userTopicsService.assignTopic(uid, createDto.topicId, createDto.userModuleId);
+  }
+
+  // Link endpoint - alias for POST assignment
+  @Post('link')
+  @Roles(
+    UserRole.PLATFORM_ADMIN,
+    UserRole.CLIENT_ADMIN,
+    UserRole.MANAGER,
+    UserRole.LEARNER,
+  )
+  @HttpCode(HttpStatus.CREATED)
+  async linkTopic(
+    @Param('userId') userId: string,
+    @Body() createDto: CreateUserTopicDto,
+    @Request() req,
+  ) {
+    const uid = parseInt(userId, 10);
+    if (isNaN(uid)) {
+      throw new BadRequestException('Invalid user ID');
+    }
+
+    // Learners can only assign to themselves
+    if (req.user.role === UserRole.LEARNER && req.user.userId !== uid) {
+      throw new BadRequestException(
+        'Learners can only assign topics to themselves',
+      );
+    }
+
+    return await this.userTopicsService.assignTopic(uid, createDto.topicId, createDto.userModuleId);
   }
 
   @Get(':topicId')

@@ -81,46 +81,6 @@ export class DomainModulesService {
   return { message };
 }
 
-  /**
-   * Unlink module from a domain
-   */
-  async unlinkModules(domainId: number, moduleIds: number[]) {
-    // Validate domain exists
-    const domain = await this.domainRepository.findOne({
-      where: { id: domainId },
-    });
-    if (!domain) {
-      throw new NotFoundException(`Domain with ID ${domainId} not found`);
-    }
-
-    // Validate all modules exist
-    const invalidModuleIds = await this.validateModulesExist(moduleIds);
-    if (invalidModuleIds.length > 0) {
-      throw new BadRequestException(
-        `Modules not found: ${invalidModuleIds.join(', ')}`,
-      );
-    }
-
-    // Unlink all modules
-    const result = await this.domainModuleRepository
-      .createQueryBuilder()
-      .delete()
-      .from('domain_modules')
-      .where('domain_id = :domainId', { domainId })
-      .andWhere('module_id IN (:...moduleIds)', { moduleIds })
-      .execute();
-
-    if (result.affected === 0) {
-      throw new NotFoundException(
-        `None of the specified modules are linked to domain ${domainId}`,
-      );
-    }
-
-    return {
-      message: `Successfully unlinked ${result.affected} module(s) from domain ${domainId}`,
-      unlinkedCount: result.affected,
-    };
-  }
 
   /**
    * Get all modules linked to a domain

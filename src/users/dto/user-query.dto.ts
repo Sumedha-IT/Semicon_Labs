@@ -132,4 +132,15 @@ export class UserQueryDto extends BaseQueryDto {
   @IsOptional()
   @IsString({ message: 'Phone number must be a string' })
   phone?: string;
+
+  // Deleted users filter
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean({ message: 'Deleted must be a boolean value' })
+  @Transform(({ value }) => {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return value;
+  })
+  deleted?: boolean;
 }

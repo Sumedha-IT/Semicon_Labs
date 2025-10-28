@@ -71,18 +71,10 @@ export class OrganizationsService {
    */
   async findOne(id: number): Promise<Organization | null> {
     return this.organizationsRepository.findOne({
-      where: { id: id, deleted_on: IsNull() },
+      where: { id: id },
     });
   }
 
-  /**
-   * Finds all non-deleted organizations
-   */
-  async findAll(): Promise<Organization[]> {
-    return this.organizationsRepository.find({
-      where: { deleted_on: IsNull() },
-    });
-  }
 
   /**
    * Updates an organization's information
@@ -105,44 +97,6 @@ export class OrganizationsService {
     return this.findOne(id);
   }
 
-  /**
-   * Soft deletes an organization
-   * Prevents deletion if organization has active users
-   */
-  async remove(id: number): Promise<{ success: boolean; message: string }> {
-    const organization = await this.findOne(id);
-    if (!organization) {
-      return this.createErrorResponse('Organization not found');
-    }
-
-    // Check if organization is already soft deleted
-    if (organization.deleted_on) {
-      return this.createErrorResponse('Organization is already deleted');
-    }
-
-    // Check if organization has active users
-    const userCount = await this.getUserCount(id);
-
-    if (userCount > 0) {
-      // Get detailed user breakdown for better error message
-      const userCountByRole = await this.getUserCountByRole(id);
-      const userBreakdown = Object.entries(userCountByRole)
-        .map(([role, count]) => `${count} ${role}(s)`)
-        .join(', ');
-
-      return this.createErrorResponse(
-        `Cannot delete organization. It has ${userCount} active user(s): ${userBreakdown}.`,
-      );
-    }
-
-    // Perform soft delete
-    await this.organizationsRepository.update(id, {
-      deleted_on: new Date(),
-      updated_on: new Date(),
-    });
-
-    return this.createSuccessResponse('Organization soft deleted successfully');
-  }
 
   // ----------------------------------------------------------------------------
   // 2. QUERY OPERATIONS
@@ -158,9 +112,7 @@ export class OrganizationsService {
     requestingUser: any,
   ): Promise<PaginatedResponseDto<Organization>> {
     const qb = this.organizationsRepository
-      .createQueryBuilder('org')
-      .select(['org.id', 'org.name'])
-      .where('org.deleted_on IS NULL');
+      .createQueryBuilder('org');
 
     // ClientAdmin can only see their org
     if (
@@ -251,7 +203,6 @@ export class OrganizationsService {
     const count = await this.usersRepository.count({
       where: {
         org_id: orgId,
-        deleted_on: IsNull(),
       },
     });
     return count;
@@ -266,7 +217,6 @@ export class OrganizationsService {
       .select('user.role', 'role')
       .addSelect('COUNT(*)', 'count')
       .where('user.org_id = :orgId', { orgId })
-      .andWhere('user.deleted_on IS NULL')
       .groupBy('user.role')
       .getRawMany();
 
@@ -330,10 +280,6 @@ export class OrganizationsService {
       return { canAccept: false, reason: 'Organization not found' };
     }
 
-    if (organization.deleted_on) {
-      return { canAccept: false, reason: 'Organization is deleted' };
-    }
-
     // Add any other business rules here (e.g., subscription limits, etc.)
     return { canAccept: true };
   }
@@ -342,35 +288,7 @@ export class OrganizationsService {
   // PRIVATE HELPER METHODS
   // ============================================================================
 
-  // ----------------------------------------------------------------------------
-  // Response Helpers
-  // ----------------------------------------------------------------------------
 
-  /**
-   * Creates a standardized error response
-   */
-  private createErrorResponse(message: string): {
-    success: boolean;
-    message: string;
-  } {
-    return {
-      success: false,
-      message,
-    };
-  }
-
-  /**
-   * Creates a standardized success response
-   */
-  private createSuccessResponse(message: string): {
-    success: boolean;
-    message: string;
-  } {
-    return {
-      success: true,
-      message,
-    };
-  }
 
   // ----------------------------------------------------------------------------
   // Validation Helpers
@@ -395,7 +313,7 @@ export class OrganizationsService {
     }
 
     const existingOrg = await this.organizationsRepository.findOne({
-      where: { [field]: normalizedValue, deleted_on: IsNull() },
+      where: { [field]: normalizedValue },
     });
 
     // If found and it's not the organization being updated

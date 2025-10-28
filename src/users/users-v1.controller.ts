@@ -13,23 +13,31 @@ import {
   HttpCode,
   BadRequestException,
   Res,
+  Inject,
+  forwardRef,
+  ForbiddenException,
 } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, IsNull } from 'typeorm';
 import { Response } from 'express';
 import { UsersService } from './users.service';
-import { UserModulesService } from '../user-modules/user-modules.service';
 import { UserQueryDto } from './dto/user-query.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorator/roles.decorator';
 import { UserRole } from '../common/constants/user-roles';
 import { CreateUserDto } from './dto/create-user.dto';
-import { CreateIndividualUserDto } from './dto/create-individual-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { SendOtpDto } from './dto/send-otp.dto';
 import { Public } from '../common/decorator/public.decorator';
+import { validateUserFieldAuthorization } from '../common/utils/field-authorization.helper';
+import { UserModule } from '../user-modules/entities/user-module.entity';
+import { UserDomain } from '../user-domains/entities/user-domain.entity';
+import { User } from './entities/user.entity';
+import { ModulesService } from '../modules/modules.service';
 import {
-  EnrollModuleDto,
-  UserModuleQueryDto,
   UpdateUserModuleDto,
+  EnrollModuleDto,
 } from '../user-modules/dto/user-module.dto';
 
 @Controller({ path: 'users', version: '1' })
@@ -37,27 +45,26 @@ import {
 export class UsersV1Controller {
   constructor(
     private readonly usersService: UsersService,
-    private readonly userModulesService: UserModulesService,
+    @InjectRepository(UserModule)
+    private userModuleRepository: Repository<UserModule>,
+    @InjectRepository(UserDomain)
+    private userDomainRepository: Repository<UserDomain>,
+    @InjectRepository(User)
+    private userRepository: Repository<User>,
+    @Inject(forwardRef(() => ModulesService))
+    private readonly modulesService: ModulesService,
   ) {}
 
   // Universal registration endpoint
   // Public for individual learners (org_id not provided or null)
   // Requires authentication for organizational users (org_id provided)
-  // Special case: Allows creating the first Platform Admin without authentication
+  // Allows Platform Admin creation through public registration
   @Public()
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   async register(@Body() createUserDto: CreateUserDto) {
-    // Special case: Allow creating the first Platform Admin without authentication
+    // Allow Platform Admin creation through public registration
     if (createUserDto.role === UserRole.PLATFORM_ADMIN) {
-      // Check if any Platform Admin already exists
-      const existingPlatformAdmin = await this.usersService.findPlatformAdmin();
-      if (existingPlatformAdmin) {
-        throw new BadRequestException(
-          'Cannot create Platform Admin through public registration: A Platform Admin already exists. Use authenticated endpoint instead.',
-        );
-      }
-      // Allow creation of the first Platform Admin
       const user = await this.usersService.create(createUserDto);
       return { id: user.id };
     }
@@ -71,13 +78,23 @@ export class UsersV1Controller {
         manager_id: null as any,
         role: UserRole.LEARNER,
       };
-      const user = await this.usersService.create(individualUserData);
-      return { id: user.id };
+      // Use registerWithOtp to send OTP
+      return await this.usersService.registerWithOtp(individualUserData);
     }
 
-    // For organizational users (org_id provided), create normally
-    const user = await this.usersService.create(createUserDto);
-    return { id: user.id };
+    // For organizational users (org_id provided), create with OTP
+    return await this.usersService.registerWithOtp(createUserDto);
+  }
+
+  /**
+   * Send OTP to an email address or phone number
+   * POST /api/v1/users/sendOtp
+   */
+  @Public()
+  @Post('sendOtp')
+  @HttpCode(HttpStatus.OK)
+  async sendOtp(@Body() sendOtpDto: SendOtpDto) {
+    return await this.usersService.sendOtp(sendOtpDto.email, sendOtpDto.phone);
   }
 
   // Protected endpoint - Create users with role-based permissions:
@@ -128,11 +145,7 @@ export class UsersV1Controller {
     @Request() req,
     @Res() res: Response,
   ) {
-    console.log(
-      'Users endpoint - req.user:',
-      JSON.stringify(req.user, null, 2),
-    );
-    const result = await this.usersService.findUsersWithPagination(
+    const result = await this.usersService.findUsersWithPaginationWithoutDetails(
       queryDto,
       req.user,
     );
@@ -145,105 +158,13 @@ export class UsersV1Controller {
     return res.status(HttpStatus.OK).json(result);
   }
 
-  // Admin endpoint to get all user-module relationships with filters
-  // Without :id parameter = system-wide view of all users' modules
-  // Query params: user_id, module_id, status, page, limit
-  // IMPORTANT: This must come BEFORE @Get(':id/modules') to avoid route conflicts
-  @Get('modules')
-  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER)
-  async getAllUserModules(
-    @Query() queryDto: UserModuleQueryDto,
-    @Res() res: Response,
-  ) {
-    const result = await this.userModulesService.findAllEnrollments(queryDto);
 
-    // Return 204 No Content if no data in response
-    if (result.data.length === 0) {
-      return res.status(HttpStatus.NO_CONTENT).send();
-    }
 
-    return res.status(HttpStatus.OK).json(result);
-  }
 
-  // Search users
-  // IMPORTANT: This must come BEFORE @Get(':id') to avoid route conflicts
-  @Get('search/:query')
-  @Roles(UserRole.PLATFORM_ADMIN)
-  searchUsers(@Param('query') query: string, @Request() req) {
-    return this.usersService.searchUsers(query, req.user);
-  }
 
-  // Filter by role
-  // IMPORTANT: This must come BEFORE @Get(':id') to avoid route conflicts
-  @Get('filter/role/:role')
-  @Roles(UserRole.PLATFORM_ADMIN)
-  filterByRole(@Param('role') role: string, @Request() req) {
-    return this.usersService.filterByRole(role, req.user);
-  }
-
-  // Filter by organization
-  // IMPORTANT: This must come BEFORE @Get(':id') to avoid route conflicts
-  @Get('filter/organization/:orgId')
-  @Roles(UserRole.PLATFORM_ADMIN)
-  filterByOrganization(@Param('orgId') orgId: string, @Request() req) {
-    return this.usersService.filterByOrganization(+orgId, req.user);
-  }
-
-  // Stats endpoints
-  // IMPORTANT: These must come BEFORE @Get(':id') to avoid route conflicts
-  @Get('stats/overview')
-  @Roles(UserRole.PLATFORM_ADMIN)
-  getUserStats(@Request() req) {
-    return this.usersService.getUserStats(req.user);
-  }
-
-  @Get('stats/by-role')
-  @Roles(UserRole.PLATFORM_ADMIN)
-  getUserStatsByRole(@Request() req) {
-    return this.usersService.getUserStatsByRole(req.user);
-  }
-
-  @Get('stats/by-organization')
-  @Roles(UserRole.PLATFORM_ADMIN)
-  getUserStatsByOrganization(@Request() req) {
-    return this.usersService.getUserStatsByOrganization(req.user);
-  }
-
-  // User profile management
-  // IMPORTANT: These must come BEFORE @Get(':id') to avoid route conflicts
-  @Get('profile/me')
-  @Roles(
-    UserRole.PLATFORM_ADMIN,
-    UserRole.CLIENT_ADMIN,
-    UserRole.MANAGER,
-    UserRole.LEARNER,
-  )
-  getMyProfile(@Request() req) {
-    if (!req.user.userId || isNaN(req.user.userId)) {
-      throw new BadRequestException('Invalid user ID');
-    }
-    return this.usersService.findOne(req.user.userId);
-  }
-
-  @Patch('profile/me')
-  @Roles(
-    UserRole.PLATFORM_ADMIN,
-    UserRole.CLIENT_ADMIN,
-    UserRole.MANAGER,
-    UserRole.LEARNER,
-  )
-  @HttpCode(HttpStatus.OK)
-  async updateMyProfile(@Body() updateUserDto: UpdateUserDto, @Request() req) {
-    if (!req.user.userId || isNaN(req.user.userId)) {
-      throw new BadRequestException('Invalid user ID');
-    }
-    await this.usersService.update(req.user.userId, updateUserDto);
-    return { user_id: req.user.userId };
-  }
-
-  // Password management
-  // IMPORTANT: These must come BEFORE @Get(':id') to avoid route conflicts
-  @Patch('change-password')
+  // Password management - self-change password
+  // Users can change their own password (with current password)
+  @Patch('password')
   @Roles(
     UserRole.PLATFORM_ADMIN,
     UserRole.CLIENT_ADMIN,
@@ -252,39 +173,447 @@ export class UsersV1Controller {
   )
   @HttpCode(HttpStatus.OK)
   changePassword(
-    @Body() passwordData: { currentPassword: string; newPassword: string },
+    @Body() passwordData: { 
+      currentPassword: string; 
+      newPassword: string; 
+    },
     @Request() req,
   ) {
-    if (!req.user.userId || isNaN(req.user.userId)) {
+    const requestingUser = req.user;
+    
+    if (!requestingUser.userId || isNaN(requestingUser.userId)) {
       throw new BadRequestException('Invalid user ID');
     }
+    
+    if (!passwordData.currentPassword) {
+      throw new BadRequestException('Current password is required');
+    }
+    
     return this.usersService.changePassword(
-      req.user.userId,
+      requestingUser.userId,
       passwordData.currentPassword,
       passwordData.newPassword,
     );
   }
 
-  @Post('reset-password')
-  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN)
-  @HttpCode(HttpStatus.OK)
-  resetPassword(
-    @Body() resetData: { userId: number; newPassword: string },
-    @Request() req,
-  ) {
-    return this.usersService.resetPassword(
-      resetData.userId,
-      resetData.newPassword,
-      req.user,
-    );
-  }
 
   // Individual learners list (admin only)
   // IMPORTANT: This must come BEFORE @Get(':id') to avoid route conflicts
-  @Get('individual-learners')
+  @Get('individualLearners')
   @Roles(UserRole.PLATFORM_ADMIN)
   getIndividualLearners() {
     return this.usersService.findIndividualLearners();
+  }
+
+  // Get user statistics
+  @Get('stats')
+  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN)
+  getUserStats(@Request() req) {
+    return this.usersService.getUserStats(req.user);
+  }
+
+  // Get user statistics by role
+  @Get('stats/role')
+  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN)
+  getUserStatsByRole(@Request() req) {
+    return this.usersService.getUserStatsByRole(req.user);
+  }
+
+
+  // ============================================================================
+  // USER MODULE ENDPOINTS - User-centric API
+  // ============================================================================
+
+  // Enroll user in a module
+  @Post(':id/modules/:moduleId/enroll')
+  @Roles(
+    UserRole.PLATFORM_ADMIN,
+    UserRole.CLIENT_ADMIN,
+    UserRole.MANAGER,
+    UserRole.LEARNER,
+  )
+  @HttpCode(HttpStatus.CREATED)
+  async enrollUserInModule(
+    @Param('id') userId: string,
+    @Param('moduleId') moduleId: string,
+    @Query('domainId') domainIdQuery: string,
+    @Body() body: any,
+    @Request() req,
+  ) {
+    const userIdNum = parseInt(userId, 10);
+    const modId = parseInt(moduleId, 10);
+    
+    if (isNaN(userIdNum) || isNaN(modId)) {
+      throw new BadRequestException('Invalid user ID or module ID');
+    }
+
+    // Learners can only enroll themselves
+    if (req.user.role === UserRole.LEARNER && req.user.userId !== userIdNum) {
+      throw new BadRequestException(
+        'Learners can only enroll themselves in modules',
+      );
+    }
+
+    // Get domainId from query param or body (query takes precedence)
+    let domainId: number | undefined;
+    if (domainIdQuery) {
+      domainId = parseInt(domainIdQuery, 10);
+      if (isNaN(domainId)) {
+        throw new BadRequestException('Invalid domain ID in query parameter');
+      }
+    } else if (body?.domainId) {
+      domainId = parseInt(body.domainId, 10);
+      if (isNaN(domainId)) {
+        throw new BadRequestException('Invalid domain ID in request body');
+      }
+    }
+
+    return this.processUserEnrollment(userIdNum, { moduleId: modId, domainId });
+  }
+
+  // Get user's enrollment in a specific module
+  @Get(':id/modules/:moduleId')
+  @Roles(
+    UserRole.PLATFORM_ADMIN,
+    UserRole.CLIENT_ADMIN,
+    UserRole.MANAGER,
+    UserRole.LEARNER,
+  )
+  async getUserModuleEnrollment(
+    @Param('id') userId: string,
+    @Param('moduleId') moduleId: string,
+    @Query('domainId') domainIdQuery: string,
+  ) {
+    const userIdNum = parseInt(userId, 10);
+    const modId = parseInt(moduleId, 10);
+    
+    if (isNaN(userIdNum) || isNaN(modId)) {
+      throw new BadRequestException('Invalid user ID or module ID');
+    }
+
+    let domainId: number | undefined;
+    if (domainIdQuery) {
+      domainId = parseInt(domainIdQuery, 10);
+      if (isNaN(domainId)) {
+        throw new BadRequestException('Invalid domain ID');
+      }
+    }
+
+    return this.getUserModule(userIdNum, modId, domainId);
+  }
+
+  // Update user's enrollment in a module
+  @Patch(':id/modules/:moduleId')
+  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER)
+  @HttpCode(HttpStatus.OK)
+  async updateUserModuleEnrollment(
+    @Param('id') userId: string,
+    @Param('moduleId') moduleId: string,
+    @Query('domainId') domainIdQuery: string,
+    @Body() updateDto: UpdateUserModuleDto,
+  ) {
+    const userIdNum = parseInt(userId, 10);
+    const modId = parseInt(moduleId, 10);
+    
+    if (isNaN(userIdNum) || isNaN(modId)) {
+      throw new BadRequestException('Invalid user ID or module ID');
+    }
+
+    let domainId: number | undefined;
+    if (domainIdQuery) {
+      domainId = parseInt(domainIdQuery, 10);
+      if (isNaN(domainId)) {
+        throw new BadRequestException('Invalid domain ID');
+      }
+    }
+
+    return this.updateUserModule(userIdNum, modId, updateDto, domainId);
+  }
+
+  // ============================================================================
+  // PRIVATE HELPER METHODS (copied from ModulesController)
+  // ============================================================================
+
+  private async processUserEnrollment(userId: number, enrollDto: EnrollModuleDto) {
+    try {
+      const { moduleId, domainId } = enrollDto;
+
+      // Validate moduleId
+      if (!moduleId || moduleId === null || moduleId === undefined) {
+        throw new BadRequestException(
+          'moduleId is required and must be a valid number',
+        );
+      }
+
+      // Validate user exists and is active
+      await this.validateUserExistsAndActive(userId);
+
+      // Validate module exists
+      await this.validateModuleExists(moduleId);
+
+      // Get or validate user_domain_id
+      const userDomainId = await this.resolveUserDomainId(userId, moduleId, domainId);
+
+      // Check if already enrolled in this domain-module combination
+      const existingEnrollment = await this.userModuleRepository.findOne({
+        where: { user_domain_id: userDomainId, module_id: moduleId },
+        relations: { userDomain: { domain: true } },
+      });
+
+      if (existingEnrollment) {
+        return {
+          message: 'User is already enrolled in this module for this domain',
+          enrollment: this.mapEnrollmentToResponse(existingEnrollment),
+        };
+      }
+
+      // Create enrollment; threshold_score defaults in DB (70)
+      const enrollment = this.userModuleRepository.create({
+        user_domain_id: userDomainId,
+        module_id: moduleId,
+        status: 'todo',
+        questions_answered: 0,
+        score: 0,
+      });
+
+      const saved = await this.userModuleRepository.save(enrollment);
+
+      return {
+        message: 'Successfully enrolled in module',
+        enrollment: this.mapEnrollmentToResponse(saved),
+      };
+    } catch (err) {
+      console.error('Enroll error:', err);
+      throw new BadRequestException('Unable to enroll user in module');
+    }
+  }
+
+  private async getUserModule(userId: number, moduleId: number, domainId?: number) {
+    // Validate user exists and is active
+    await this.validateUserExistsAndActive(userId);
+
+    // Build query with user_domain relationship
+    const queryBuilder = this.userModuleRepository
+      .createQueryBuilder('um')
+      .innerJoinAndSelect('um.userDomain', 'ud')
+      .innerJoinAndSelect('ud.domain', 'd')
+      .innerJoinAndSelect('um.module', 'm')
+      .where('ud.user_id = :userId', { userId })
+      .andWhere('um.module_id = :moduleId', { moduleId });
+
+    // Filter by domainId if provided
+    if (domainId) {
+      queryBuilder.andWhere('ud.domain_id = :domainId', { domainId });
+    }
+
+    const enrollment = await queryBuilder.getOne();
+
+    if (!enrollment) {
+      const domainMsg = domainId ? ` in domain ${domainId}` : '';
+      throw new BadRequestException(
+        `No enrollment found for user ${userId} in module ${moduleId}${domainMsg}`,
+      );
+    }
+
+    return {
+      id: enrollment.id,
+      user_domain_id: enrollment.user_domain_id,
+      module_id: enrollment.module_id,
+      module_title: enrollment.module.title,
+      module_description: enrollment.module.desc,
+      domain_id: enrollment.userDomain.domain_id,
+      domain_name: enrollment.userDomain.domain.name,
+      questions_answered: enrollment.questions_answered,
+      score: enrollment.score,
+      threshold_score: enrollment.threshold_score,
+      status: enrollment.status,
+      joined_on: enrollment.joined_on,
+      completed_on: enrollment.completed_on,
+      passed: enrollment.score >= enrollment.threshold_score,
+    };
+  }
+
+  private async updateUserModule(
+    userId: number,
+    moduleId: number,
+    updateDto: UpdateUserModuleDto,
+    domainId?: number,
+  ) {
+    // Validate user exists and is active
+    await this.validateUserExistsAndActive(userId);
+
+    // Find the enrollment with user_domain relationship
+    const queryBuilder = this.userModuleRepository
+      .createQueryBuilder('um')
+      .innerJoinAndSelect('um.userDomain', 'ud')
+      .where('ud.user_id = :userId', { userId })
+      .andWhere('um.module_id = :moduleId', { moduleId });
+
+    // Filter by domainId if provided
+    if (domainId) {
+      queryBuilder.andWhere('ud.domain_id = :domainId', { domainId });
+    }
+
+    const enrollment = await queryBuilder.getOne();
+
+    if (!enrollment) {
+      const domainMsg = domainId ? ` in domain ${domainId}` : '';
+      throw new BadRequestException(
+        `No enrollment found for user ${userId} in module ${moduleId}${domainMsg}`,
+      );
+    }
+
+    // Apply updates using helper
+    this.applyEnrollmentUpdates(enrollment, updateDto);
+
+    const updated = await this.userModuleRepository.save(enrollment);
+
+    return {
+      message: 'User module updated successfully',
+      data: this.mapEnrollmentToDetailedResponse(updated),
+    };
+  }
+
+  // Helper methods
+  private async validateUserExistsAndActive(userId: number) {
+    const user = await this.userRepository.findOne({
+      where: { id: userId, deleted_on: IsNull() },
+    });
+
+    if (!user) {
+      const deletedUser = await this.userRepository.findOne({
+        where: { id: userId },
+      });
+
+      if (deletedUser && deletedUser.deleted_on) {
+        throw new BadRequestException(`User with ID ${userId} has been deleted`);
+      } else {
+        throw new BadRequestException(`User with ID ${userId} not found`);
+      }
+    }
+
+    return user;
+  }
+
+  private async validateModuleExists(moduleId: number) {
+    const module = await this.modulesService.findOne(moduleId);
+    if (!module) {
+      throw new BadRequestException(`Module with ID ${moduleId} not found`);
+    }
+    return module;
+  }
+
+  private async resolveUserDomainId(
+    userId: number,
+    moduleId: number,
+    domainId?: number,
+  ): Promise<number> {
+    // Find all user_domains where user has access to this module
+    const userDomains = await this.userDomainRepository
+      .createQueryBuilder('ud')
+      .innerJoin('domain_modules', 'dm', 'dm.domain_id = ud.domain_id')
+      .where('ud.user_id = :userId', { userId })
+      .andWhere('dm.module_id = :moduleId', { moduleId })
+      .getMany();
+
+    if (userDomains.length === 0) {
+      throw new BadRequestException(
+        `User does not have access to this module. User must be assigned to at least one of the module's domains first.`,
+      );
+    }
+
+    // If domainId specified, validate and return that specific user_domain
+    if (domainId) {
+      const userDomain = userDomains.find((ud) => ud.domain_id === domainId);
+      if (!userDomain) {
+        throw new BadRequestException(
+          `User does not have access to module in domain ${domainId}.`,
+        );
+      }
+      return userDomain.id;
+    }
+
+    // If module available in multiple domains, require domainId to be specified
+    if (userDomains.length > 1) {
+      throw new BadRequestException(
+        `Module is available in multiple domains. Please specify domainId parameter. Available domains: ${userDomains.map((ud) => ud.domain_id).join(', ')}`,
+      );
+    }
+
+    // Auto-select the only available domain
+    return userDomains[0].id;
+  }
+
+  private applyEnrollmentUpdates(
+    enrollment: UserModule,
+    updateDto: UpdateUserModuleDto,
+  ): void {
+    // Update basic fields
+    if (updateDto.questionsAnswered !== undefined) {
+      enrollment.questions_answered = updateDto.questionsAnswered;
+    }
+
+    if (updateDto.score !== undefined) {
+      enrollment.score = updateDto.score;
+    }
+
+    if (updateDto.thresholdScore !== undefined) {
+      enrollment.threshold_score = updateDto.thresholdScore;
+    }
+
+    // Auto-update status based on score vs threshold
+    if (updateDto.score !== undefined) {
+      const finalScore = updateDto.score;
+      const threshold =
+        updateDto.thresholdScore !== undefined
+          ? updateDto.thresholdScore
+          : enrollment.threshold_score;
+
+      if (finalScore >= threshold) {
+        // User passed - mark as completed
+        enrollment.status = 'completed';
+        enrollment.completed_on = new Date();
+      } else {
+        // User failed - keep in progress so they can retry
+        enrollment.status = 'inProgress';
+        enrollment.completed_on = null; // Clear completed timestamp
+      }
+    } else if (updateDto.status !== undefined) {
+      // Allow manual status override
+      enrollment.status = updateDto.status;
+
+      // Set completed_on timestamp if status is completed
+      if (updateDto.status === 'completed' && !enrollment.completed_on) {
+        enrollment.completed_on = new Date();
+      } else if (updateDto.status !== 'completed') {
+        // Clear completed_on if status is changed back to todo or inProgress
+        enrollment.completed_on = null;
+      }
+    }
+  }
+
+  private mapEnrollmentToResponse(enrollment: UserModule) {
+    return {
+      id: enrollment.id,
+      module_id: enrollment.module_id,
+      status: enrollment.status,
+      threshold_score: enrollment.threshold_score,
+      joined_on: enrollment.joined_on,
+    };
+  }
+
+  private mapEnrollmentToDetailedResponse(enrollment: UserModule) {
+    return {
+      id: enrollment.id,
+      module_id: enrollment.module_id,
+      questions_answered: enrollment.questions_answered,
+      score: enrollment.score,
+      threshold_score: enrollment.threshold_score,
+      status: enrollment.status,
+      passed: enrollment.score >= enrollment.threshold_score,
+      joined_on: enrollment.joined_on,
+      completed_on: enrollment.completed_on,
+    };
   }
 
   // Get one user by id
@@ -303,7 +632,7 @@ export class UsersV1Controller {
   // - Platform Admin: Can update any user in any organization
   // - ClientAdmin: Can update Manager, Learner in their own organization only
   @Patch(':id')
-  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN)
+  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER, UserRole.LEARNER)
   @HttpCode(HttpStatus.OK)
   async update(
     @Param('id') id: string,
@@ -316,6 +645,19 @@ export class UsersV1Controller {
     }
 
     const requestingUser = req.user;
+
+    // Learner and Manager can only update their own profile
+    if ((requestingUser.role === UserRole.LEARNER || requestingUser.role === UserRole.MANAGER) && userId !== requestingUser.userId) {
+      throw new ForbiddenException('Not authorized to update this user');
+    }
+
+    // Validate field-level authorization
+    const isSelfUpdate = userId === requestingUser.userId;
+    validateUserFieldAuthorization(
+      updateUserDto,
+      requestingUser.role,
+      isSelfUpdate,
+    );
 
     // If ClientAdmin is updating a user
     if (requestingUser.role === UserRole.CLIENT_ADMIN) {
@@ -368,214 +710,69 @@ export class UsersV1Controller {
     return { user_id: userId };
   }
 
-  // Debug endpoint to check user status
-  @Get(':id/debug')
-  @Roles(UserRole.PLATFORM_ADMIN)
-  async debugUser(@Param('id') id: string) {
-    const userId = parseInt(id, 10);
-    if (isNaN(userId)) {
-      throw new BadRequestException('Invalid user ID');
-    }
-    return this.usersService.debugUser(userId);
-  }
 
   // Delete user by id
   @Delete(':id')
-  @Roles(UserRole.PLATFORM_ADMIN)
-  @HttpCode(HttpStatus.OK)
-  remove(@Param('id') id: string) {
-    const userId = parseInt(id, 10);
-    if (isNaN(userId)) {
-      throw new BadRequestException('Invalid user ID');
-    }
-    return this.usersService.remove(userId).then((result) => {
-      if (!result.success) {
-        if (result.message === 'User not found') {
-          throw new BadRequestException(result.message);
-        }
-        if (result.message === 'User is already deleted') {
-          throw new BadRequestException(result.message);
-        }
-        if (result.message?.startsWith('Cannot delete manager.')) {
-          // Manager has active learners
-          throw new BadRequestException(result.message);
-        }
-        if (result.message?.startsWith('Cannot delete ClientAdmin.')) {
-          throw new BadRequestException(result.message);
-        }
-      }
-      return result; // { success: true, message: 'User soft deleted successfully.' }
-    });
-  }
-
-
-  // User-centric module operations
-
-  // Enroll user in a module - both IDs in URL, optional domainId in query or body
-  @Post(':id/modules/:moduleId/enroll')
-  @Roles(
-    UserRole.PLATFORM_ADMIN,
-    UserRole.CLIENT_ADMIN,
-    UserRole.MANAGER,
-    UserRole.LEARNER,
-  )
-  @HttpCode(HttpStatus.CREATED)
-  async enrollInModule(
-    @Param('id') id: string,
-    @Param('moduleId') moduleId: string,
-    @Query('domainId') domainIdQuery: string,
-    @Body() body: any, // Accept body with optional domainId
-    @Request() req,
-  ) {
-    const userId = parseInt(id, 10);
-    const modId = parseInt(moduleId, 10);
-    if (isNaN(userId) || isNaN(modId)) {
-      throw new BadRequestException('Invalid user ID or module ID');
-    }
-
-    // Learners can only enroll themselves
-    if (req.user.role === UserRole.LEARNER && req.user.userId !== userId) {
-      throw new BadRequestException(
-        'Learners can only enroll themselves in modules',
-      );
-    }
-
-    // Get domainId from query param or body (query takes precedence)
-    let domainId: number | undefined;
-    if (domainIdQuery) {
-      domainId = parseInt(domainIdQuery, 10);
-      if (isNaN(domainId)) {
-        throw new BadRequestException('Invalid domain ID in query parameter');
-      }
-    } else if (body?.domainId) {
-      domainId = parseInt(body.domainId, 10);
-      if (isNaN(domainId)) {
-        throw new BadRequestException('Invalid domain ID in request body');
-      }
-    }
-
-    return this.userModulesService.enroll(userId, { moduleId: modId, domainId });
-  }
-
-  @Get(':id/modules/:moduleId')
-  @Roles(
-    UserRole.PLATFORM_ADMIN,
-    UserRole.CLIENT_ADMIN,
-    UserRole.MANAGER,
-    UserRole.LEARNER,
-  )
-  async getUserModule(
-    @Param('id') id: string,
-    @Param('moduleId') moduleId: string,
-    @Query('domainId') domainIdQuery: string,
-  ) {
-    const userId = parseInt(id, 10);
-    const modId = parseInt(moduleId, 10);
-    if (isNaN(userId) || isNaN(modId)) {
-      throw new BadRequestException('Invalid user ID or module ID');
-    }
-
-    let domainId: number | undefined;
-    if (domainIdQuery) {
-      domainId = parseInt(domainIdQuery, 10);
-      if (isNaN(domainId)) {
-        throw new BadRequestException('Invalid domain ID');
-      }
-    }
-
-    return this.userModulesService.getUserModule(userId, modId, domainId);
-  }
-
-  // Get user's modules with flexible filtering
-  // Query params:
-  //   - enroll=false: show available modules from user's domains (not enrolled yet)
-  //   - enroll=true or omitted: show enrolled modules (default)
-  //   - domain_id: filter by specific domain
-  //   - status: filter by enrollment status (for enrolled modules)
-  @Get(':id/modules')
-  @Roles(
-    UserRole.PLATFORM_ADMIN,
-    UserRole.CLIENT_ADMIN,
-    UserRole.MANAGER,
-    UserRole.LEARNER,
-  )
-  async getUserModules(
-    @Param('id') id: string,
-    @Query() queryDto: UserModuleQueryDto,
-    @Request() req,
-    @Res() res: Response,
-  ) {
+  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async remove(@Param('id') id: string, @Request() req) {
     const userId = parseInt(id, 10);
     if (isNaN(userId)) {
       throw new BadRequestException('Invalid user ID');
     }
 
-    // Learners can only view their own modules
-    if (req.user.role === UserRole.LEARNER && req.user.userId !== userId) {
-      throw new BadRequestException('Learners can only view their own modules');
-    }
+    const requestingUser = req.user;
 
-    const result = await this.userModulesService.getUserModules(
-      userId,
-      queryDto,
-    );
+    // If ClientAdmin is deleting a user
+    if (requestingUser.role === UserRole.CLIENT_ADMIN) {
+      // Get the user being deleted
+      const userToDelete = await this.usersService.findOne(userId);
 
-    // Return 204 No Content if no data in response
-    if (result.data.length === 0) {
-      return res.status(HttpStatus.NO_CONTENT).send();
-    }
+      if (!userToDelete) {
+        throw new BadRequestException('User not found');
+      }
 
-    return res.status(HttpStatus.OK).json(result);
-  }
+      // ClientAdmin can only delete users in their own organization
+      if (userToDelete.org_id !== requestingUser.orgId) {
+        throw new BadRequestException(
+          `ClientAdmin can only delete users in their own organization (org_id: ${requestingUser.orgId}).`,
+        );
+      }
 
-  @Patch(':id/modules/:moduleId')
-  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER)
-  @HttpCode(HttpStatus.OK)
-  async updateUserModule(
-    @Param('id') id: string,
-    @Param('moduleId') moduleId: string,
-    @Query('domainId') domainIdQuery: string,
-    @Body() updateDto: UpdateUserModuleDto,
-  ) {
-    const userId = parseInt(id, 10);
-    const modId = parseInt(moduleId, 10);
-    if (isNaN(userId) || isNaN(modId)) {
-      throw new BadRequestException('Invalid user ID or module ID');
-    }
-
-    let domainId: number | undefined;
-    if (domainIdQuery) {
-      domainId = parseInt(domainIdQuery, 10);
-      if (isNaN(domainId)) {
-        throw new BadRequestException('Invalid domain ID');
+      // ClientAdmin cannot delete ClientAdmin or Platform Admin
+      if (
+        userToDelete.role === UserRole.CLIENT_ADMIN ||
+        userToDelete.role === UserRole.PLATFORM_ADMIN
+      ) {
+        throw new BadRequestException(
+          `ClientAdmin cannot delete ${userToDelete.role} users.`,
+        );
       }
     }
 
-    return this.userModulesService.updateUserModule(userId, modId, updateDto, domainId);
+    await this.usersService.remove(userId);
   }
 
-  @Delete(':id/modules/:moduleId/enroll')
-  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER)
+  // Restore soft-deleted user
+  @Patch(':id/restore')
+  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN)
   @HttpCode(HttpStatus.OK)
-  async unenrollFromModule(
-    @Param('id') id: string,
-    @Param('moduleId') moduleId: string,
-    @Query('domainId') domainIdQuery: string,
-  ) {
+  async restore(@Param('id') id: string, @Request() req) {
     const userId = parseInt(id, 10);
-    const modId = parseInt(moduleId, 10);
-    if (isNaN(userId) || isNaN(modId)) {
-      throw new BadRequestException('Invalid user ID or module ID');
+    if (isNaN(userId)) {
+      throw new BadRequestException('Invalid user ID');
     }
-
-    let domainId: number | undefined;
-    if (domainIdQuery) {
-      domainId = parseInt(domainIdQuery, 10);
-      if (isNaN(domainId)) {
-        throw new BadRequestException('Invalid domain ID');
-      }
+    
+    const result = await this.usersService.restore(userId, req.user);
+    if (!result.success) {
+      throw new BadRequestException(result.message);
     }
-
-    return this.userModulesService.unenrollByUserAndModule(userId, modId, domainId);
+    
+    return result;
   }
+
+
+
 }
+
+

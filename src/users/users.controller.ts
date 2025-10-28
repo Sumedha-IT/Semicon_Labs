@@ -16,8 +16,6 @@ import {
 } from '@nestjs/common';
 import { Response } from 'express';
 import { UsersService } from './users.service';
-import { UserDomainsService } from '../user-domains/user-domains.service';
-import { LinkUserToDomainsDto } from '../user-domains/dto/user-domain.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { CreateIndividualUserDto } from './dto/create-individual-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -33,7 +31,6 @@ import { UserRole } from '../common/constants/user-roles';
 export class UsersController {
   constructor(
     private readonly usersService: UsersService,
-    private readonly userDomainsService: UserDomainsService,
   ) {}
 
   // Public self-registration endpoint for individual learners
@@ -79,13 +76,17 @@ export class UsersController {
   @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN)
   async findAll(
     @Query() queryDto: UserQueryDto,
+    @Query('orgID') orgID: string,
     @Request() req,
     @Res() res: Response,
   ) {
-    console.log(
-      'Users v2 endpoint - req.user:',
-      JSON.stringify(req.user, null, 2),
-    );
+    // If orgID query parameter is provided, filter by organization
+    if (orgID) {
+      const users = await this.usersService.filterByOrganization(+orgID, req.user);
+      return res.status(HttpStatus.OK).json(users);
+    }
+
+    // Otherwise, use the normal pagination
     const result = await this.usersService.findUsersWithPagination(
       queryDto,
       req.user,
@@ -99,41 +100,35 @@ export class UsersController {
     return res.status(HttpStatus.OK).json(result);
   }
 
-  // Domain linking endpoints
-  @Post(':id/domains')
-  @Roles(UserRole.PLATFORM_ADMIN)
-  async linkDomains(
+
+
+  @Get(':id/modules')
+  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER, UserRole.LEARNER)
+  async getUserModules(
     @Param('id') id: string,
-    @Body() body: LinkUserToDomainsDto,
+    @Query() queryDto: any,
+    @Request() req,
+    @Res() res: Response,
   ) {
     const userId = parseInt(id, 10);
-    return this.userDomainsService.link(userId, body.domainIds);
-  }
+    if (isNaN(userId)) {
+      throw new BadRequestException('Invalid user ID');
+    }
 
-  @Get(':id/domains')
-  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER)
-  async listUserDomains(@Param('id') id: string, @Res() res: Response) {
-    const userId = parseInt(id, 10);
-    const result = await this.userDomainsService.listUserDomains(userId, { page: 1, limit: 1000 });
+    // Check if user has access to view this user's modules
+    if (req.user.role === UserRole.LEARNER && req.user.userId !== userId) {
+      throw new BadRequestException('Users can only view their own modules');
+    }
 
-    // Return 204 No Content if no domains linked
+    // Get user modules using the users service
+    const result = await this.usersService.getUserModules(userId, queryDto);
+
+    // Return 204 No Content if no modules found
     if (result.data.length === 0) {
       return res.status(HttpStatus.NO_CONTENT).send();
     }
 
     return res.status(HttpStatus.OK).json(result);
-  }
-
-  @Delete(':id/domains/:domainId')
-  @Roles(UserRole.PLATFORM_ADMIN)
-  @HttpCode(HttpStatus.NO_CONTENT)
-  async unlinkDomain(
-    @Param('id') id: string,
-    @Param('domainId') domainId: string,
-  ) {
-    const userId = parseInt(id, 10);
-    const did = parseInt(domainId, 10);
-    await this.userDomainsService.unlink(userId, did);
   }
 
   @Get(':id')
@@ -188,11 +183,6 @@ export class UsersController {
     return this.usersService.filterByRole(role, req.user);
   }
 
-  @Get('filter/organization/:orgId')
-  @Roles(UserRole.PLATFORM_ADMIN)
-  filterByOrganization(@Param('orgId') orgId: string, @Request() req) {
-    return this.usersService.filterByOrganization(+orgId, req.user);
-  }
 
   // Statistics and analytics - Only for PlatformAdmin
   @Get('stats/overview')
@@ -207,11 +197,7 @@ export class UsersController {
     return this.usersService.getUserStatsByRole(req.user);
   }
 
-  @Get('stats/by-organization')
-  @Roles(UserRole.PLATFORM_ADMIN)
-  getUserStatsByOrganization(@Request() req) {
-    return this.usersService.getUserStatsByOrganization(req.user);
-  }
+  
 
   // User profile management
   @Get('profile/me')

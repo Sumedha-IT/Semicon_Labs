@@ -1,4 +1,4 @@
-import { PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, DeleteDateColumn } from 'typeorm';
 
 /**
  * Base entity for progress-tracking tables
@@ -14,5 +14,8 @@ export abstract class ProgressBaseEntity {
 
   @UpdateDateColumn({ name: 'updated_on', type: 'timestamptz' })
   updated_on: Date;
+
+  @DeleteDateColumn({ name: 'deleted_on', type: 'timestamptz' })
+  deleted_on: Date | null;
 }
 

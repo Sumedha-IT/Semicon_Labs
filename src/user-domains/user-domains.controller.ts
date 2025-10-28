@@ -11,6 +11,7 @@ import {
   UseGuards,
   BadRequestException,
   Res,
+  Request,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { UserDomainsService } from './user-domains.service';
@@ -121,6 +122,35 @@ export class UserDomainsController {
     };
   }
 
+  @Get(':id/modules')
+  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER, UserRole.LEARNER)
+  async getUserModules(
+    @Param('id') id: string,
+    @Query() queryDto: any,
+    @Request() req,
+    @Res() res: Response,
+  ) {
+    const userId = parseInt(id, 10);
+    if (isNaN(userId)) {
+      throw new BadRequestException('Invalid user ID');
+    }
+
+    // Check if user has access to view this user's modules
+    if (req.user.role === UserRole.LEARNER && req.user.userId !== userId) {
+      throw new BadRequestException('Users can only view their own modules');
+    }
+
+    // Get user modules using the user domains service
+    const result = await this.userDomainsService.getUserModules(userId, queryDto);
+
+    // Return 204 No Content if no modules found
+    if (result.data.length === 0) {
+      return res.status(HttpStatus.NO_CONTENT).send();
+    }
+
+    return res.status(HttpStatus.OK).json(result);
+  }
+
   @Get(':id/domains')
   @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER)
   async listUserDomains(
@@ -145,35 +175,25 @@ export class UserDomainsController {
     return res.status(HttpStatus.OK).json(result);
   }
 
-  @Delete(':id/domains/:domainId/link')
-  @Roles(UserRole.PLATFORM_ADMIN)
-  @HttpCode(HttpStatus.OK)
-  async unlinkDomain(
+  @Get(':id/domains/:domainId')
+  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.MANAGER)
+  async getUserDomain(
     @Param('id') id: string,
     @Param('domainId') domainId: string,
   ) {
     const userId = parseInt(id, 10);
-    const did = parseInt(domainId, 10);
+    const domainIdNum = parseInt(domainId, 10);
 
     if (isNaN(userId)) {
       throw new BadRequestException('Invalid user ID');
     }
 
-    if (isNaN(did)) {
+    if (isNaN(domainIdNum)) {
       throw new BadRequestException('Invalid domain ID');
     }
 
-    // This will throw NotFoundException if user doesn't exist
-    const result = await this.userDomainsService.unlink(userId, did);
-
-    if (!result.success) {
-      throw new BadRequestException(result.message);
-    }
-
-    return {
-      success: true,
-      message: result.message,
-    };
+    return this.userDomainsService.getUserDomain(userId, domainIdNum);
   }
+
 }
 

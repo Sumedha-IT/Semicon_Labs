@@ -10,6 +10,7 @@ import{
     HttpCode,
     HttpStatus,
     UseGuards,
+    BadRequestException,
     Res,
 } from '@nestjs/common';
 import { TopicsService } from './topics.service';
@@ -85,7 +86,22 @@ export class TopicsController {
     
     @Delete(':id')
     @Roles(UserRole.PLATFORM_ADMIN)
-    async remove(@Param('id') id: string) {                                             
-        return this.topicsService.remove(+id);
+    @HttpCode(HttpStatus.OK)
+    async remove(
+        @Param('id') id: string,
+        @Body() body: { reason: string },
+        @GetUser() user: any
+    ) {
+        const topicId = parseInt(id, 10);
+        if (isNaN(topicId)) {
+            throw new BadRequestException('Invalid topic ID');
+        }
+        
+        // Validate that reason is provided and not empty
+        if (!body?.reason || body.reason.trim().length === 0) {
+            throw new BadRequestException('Reason is required for topic deletion');
+        }
+        
+        return this.topicsService.remove(topicId, user.userId, body.reason.trim());
     }
 }

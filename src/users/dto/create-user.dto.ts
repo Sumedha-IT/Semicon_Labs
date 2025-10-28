@@ -9,8 +9,10 @@ import {
   Length,
   Matches,
   IsPositive,
+  ValidateIf,
 } from 'class-validator';
 import { UserRole } from '../../common/constants/user-roles';
+import { Match } from '../../common/decorator/match.decorator';
 
 export class CreateUserDto {
   @IsString({ message: 'Name must be a string' })
@@ -38,6 +40,11 @@ export class CreateUserDto {
   )
   password: string;
 
+  @IsString({ message: 'Confirm password must be a string' })
+  @MinLength(8, { message: 'Confirm password must be at least 8 characters long' })
+  @Match('password', { message: 'Password and confirm password must match' })
+  confirmPassword: string;
+
   @IsOptional()
   @IsString()
   password_hash?: string;
@@ -55,18 +62,22 @@ export class CreateUserDto {
   )
   dob?: string;
 
+  @IsOptional()
+  @ValidateIf(o => o.user_phone !== undefined && o.user_phone !== null && o.user_phone !== '')
   @IsString({ message: 'Phone number must be a string' })
   @Matches(/^\d{10}$/, { message: 'Phone number must be exactly 10 digits' })
   @Length(10, 10, { message: 'Phone number must be exactly 10 digits' })
-  user_phone: string;
+  user_phone?: string;
 
+  @IsOptional()
+  @ValidateIf(o => o.location !== undefined && o.location !== null && o.location !== '')
   @IsString({ message: 'Location must be a string' })
   @Length(1, 150, { message: 'Location must be between 1 and 150 characters' })
   @Matches(/^[a-zA-Z0-9\s\-,\.]+$/, {
     message:
       'Location can only contain letters, numbers, spaces, hyphens, commas, and periods',
   })
-  location: string;
+  location?: string;
 
   @IsString({ message: 'Device number must be a string' })
   @Length(1, 100, {
@@ -78,9 +89,11 @@ export class CreateUserDto {
   })
   registered_device_no: string;
 
+  @IsOptional()
+  @ValidateIf(o => o.tool_id !== undefined && o.tool_id !== null)
   @IsNumber({}, { message: 'Tool ID must be a valid number' })
   @IsPositive({ message: 'Tool ID must be a positive number' })
-  tool_id: number;
+  tool_id?: number;
 
   @IsOptional()
   @IsNumber({}, { message: 'Organization ID must be a valid number' })
@@ -89,4 +102,19 @@ export class CreateUserDto {
   @IsOptional()
   @IsNumber({}, { message: 'Manager ID must be a valid number' })
   manager_id?: number;
+
+  @IsOptional()
+  @IsString({ message: 'Profession must be a string' })
+  @Length(1, 100, { message: 'Profession must be between 1 and 100 characters' })
+  profession?: string;
+
+  @IsOptional()
+  @IsString({ message: 'Highest qualification must be a string' })
+  @Length(1, 100, { message: 'Highest qualification must be between 1 and 100 characters' })
+  highest_qualification?: string;
+
+  @IsOptional()
+  @IsString({ message: 'Specialization must be a string' })
+  @Length(1, 150, { message: 'Specialization must be between 1 and 150 characters' })
+  highest_qualification_specialization?: string;
 }

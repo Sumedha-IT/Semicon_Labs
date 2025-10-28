@@ -3,13 +3,15 @@ import {
   Get,
   Post,
   Body,
-  Patch,
   Param,
   Query,
   HttpCode,
   HttpStatus,
   UseGuards,
   Res,
+  Patch,
+  Request,
+  BadRequestException,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { DomainsService } from './domains.service';
@@ -19,7 +21,6 @@ import { DomainQueryDto } from './dto/domain-query.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorator/roles.decorator';
-import { GetUser } from '../common/decorator/get-user.decorator';
 import { UserRole } from '../common/constants/user-roles';
 
 @Controller({ path: 'domains', version: '1' })
@@ -54,13 +55,19 @@ export class DomainsController {
   }
 
   @Patch(':id')
-  @Roles(UserRole.PLATFORM_ADMIN)
-  update(
+  @Roles(UserRole.PLATFORM_ADMIN, UserRole.CLIENT_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  async update(
     @Param('id') id: string,
-    @Body() dto: UpdateDomainDto,
-    @GetUser('userId') userId: number,
+    @Body() updateDomainDto: UpdateDomainDto,
+    @Request() req,
   ) {
-    return this.domainsService.update(+id, dto, userId);
+    const domainId = parseInt(id, 10);
+    if (isNaN(domainId)) {
+      throw new BadRequestException('Invalid domain ID');
+    }
+
+    return this.domainsService.update(domainId, updateDomainDto, req.user.userId);
   }
 
   // Note: Domain deletion is not supported as domains are core entities
